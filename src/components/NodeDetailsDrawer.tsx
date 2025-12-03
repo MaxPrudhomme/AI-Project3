@@ -18,6 +18,8 @@ export function NodeDetailsDrawer({ isOpen, onOpenChange, node }: NodeDetailsDra
   // Get display name (censored if undiscovered)
   const displayBiome = node.discovered ? node.biome : 'Unknown Biome';
   const displayVariant = node.discovered ? node.variant : 'Unknown Variant';
+  const hasSpecialElement = node.specialElement !== null;
+  const displaySpecialElement = node.discovered && hasSpecialElement ? node.specialElement : (hasSpecialElement ? '?' : null);
 
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange} direction="left">
@@ -60,6 +62,14 @@ export function NodeDetailsDrawer({ isOpen, onOpenChange, node }: NodeDetailsDra
                     {node.discovered ? 'Discovered' : 'Undiscovered'}
                   </Badge>
                 </div>
+                {hasSpecialElement && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Special Element:</span>
+                    <Badge variant={node.discovered ? 'default' : 'secondary'} className="bg-white text-black border-2 border-black">
+                      {displaySpecialElement}
+                    </Badge>
+                  </div>
+                )}
               </div>
 
               {/* Connected Nodes */}

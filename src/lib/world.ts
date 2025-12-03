@@ -31,5 +31,17 @@ export const Variants = {
     Ancient: 'Ancient',
 } as const;
 
+export const SpecialElements = {
+    Market: 'Market',
+    City: 'City',
+    Workshop: 'Workshop',
+    Temple: 'Temple',
+    Tavern: 'Tavern',
+    Library: 'Library',
+    Forge: 'Forge',
+    Apothecary: 'Apothecary',
+} as const;
+
 export type Biomes = typeof Biomes[keyof typeof Biomes];
 export type Variants = typeof Variants[keyof typeof Variants];
+export type SpecialElements = typeof SpecialElements[keyof typeof SpecialElements] | null;

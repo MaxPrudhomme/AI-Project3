@@ -1,10 +1,11 @@
-import { Biomes, Variants } from "./world";
+import { Biomes, Variants, SpecialElements } from "./world";
 
 interface State {
     biome: Biomes;
     variant: Variants;
     transitions: Transition[];
     discovered: boolean;
+    specialElement: SpecialElements;
 }
 
 interface Transition {
@@ -66,11 +67,22 @@ class Automaton {
     static createRandom(): Automaton {
         // Exclude Gateway from initial biome array - it will be added later
         const biomeArray = Object.values(Biomes).filter(b => b !== Biomes.Gateway);
+        
+        // Helper function to randomly assign special elements (10% chance per node - rare)
+        const getRandomSpecialElement = (): SpecialElements => {
+            if (Math.random() < 0.1) {
+                const specialElementValues = Object.values(SpecialElements);
+                return specialElementValues[Math.floor(Math.random() * specialElementValues.length)] as SpecialElements;
+            }
+            return null;
+        };
+        
         const states: State[] = biomeArray.map((biome) => ({
             biome,
             variant: Variants.Default,
             transitions: [],
             discovered: false,
+            specialElement: getRandomSpecialElement(),
         }));
 
         const getRandomConnectionCount = (): number => {
@@ -158,6 +170,7 @@ class Automaton {
             variant: Variants.Default,
             transitions: [], // Gateway has no outgoing transitions (it's the exit)
             discovered: false,
+            specialElement: null, // Gateway doesn't have special elements
         };
         states.push(gatewayState);
         stateToBiome.set(Biomes.Gateway, gatewayState);

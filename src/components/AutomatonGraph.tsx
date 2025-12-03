@@ -21,6 +21,24 @@ import {
   initializeNodePositions,
 } from '@/lib/graphLogic';
 
+/**
+ * Get icon symbol for special element type
+ */
+const getSpecialElementIcon = (element: string | null): string => {
+  if (!element) return '';
+  const iconMap: Record<string, string> = {
+    Market: 'M',
+    City: 'C',
+    Workshop: 'W',
+    Temple: 'T',
+    Tavern: '🍺',
+    Library: 'L',
+    Forge: 'F',
+    Apothecary: 'A',
+  };
+  return iconMap[element] || '?';
+};
+
 interface AutomatonGraphProps {
   automaton: Automaton;
   player: Player; // Kept for potential future use
@@ -41,6 +59,7 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
   const linkDotsRef = useRef<d3.Selection<SVGCircleElement, { link: LinkData; dotIndex: number }, SVGGElement, unknown> | null>(null);
   const nodeLabelsRef = useRef<d3.Selection<SVGGElement, NodeData, SVGGElement, unknown> | null>(null);
   const edgeLabelsRef = useRef<d3.Selection<SVGGElement, LinkData, SVGGElement, unknown> | null>(null);
+  const specialElementBadgesRef = useRef<d3.Selection<SVGGElement, NodeData, SVGGElement, unknown> | null>(null);
 
   const { nodes, links } = useMemo(() => {
     const states = automaton.getStates();
@@ -52,6 +71,7 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
         biome: state.biome,
         variant: state.variant,
         discovered: state.discovered,
+        specialElement: state.specialElement,
       });
     });
 
@@ -280,6 +300,47 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
       .attr('fill', 'hsl(var(--background))')
       .text('P');
 
+    // Create special element badges ONLY for nodes that have special elements
+    const nodesWithSpecialElements = nodes.filter(n => n.specialElement !== null);
+    const specialElementBadgesSelection = nodeGroup
+      .selectAll<SVGGElement, NodeData>('g.special-element-badge')
+      .data(nodesWithSpecialElements, (d) => d.id);
+    
+    // Remove badges for nodes that no longer have special elements
+    specialElementBadgesSelection.exit().remove();
+    
+    const specialElementBadges = specialElementBadgesSelection
+      .enter()
+      .append('g')
+      .attr('class', 'special-element-badge');
+    
+    // Add circle background (white with black border)
+    specialElementBadges
+      .append('circle')
+      .attr('r', 12)
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#000000')
+      .attr('stroke-width', 2)
+      .style('filter', 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3))');
+    
+    // Add text icon (show ? if undiscovered, otherwise show icon)
+    specialElementBadges
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('font-size', '12px')
+      .attr('font-weight', 'bold')
+      .attr('fill', '#000000')
+      .attr('class', 'special-element-icon')
+      .text((d) => {
+        const isCurrentPosition = d.id === currentPositionRef.current.biome;
+        const shouldShowIcon = d.discovered || isCurrentPosition;
+        return shouldShowIcon ? getSpecialElementIcon(d.specialElement) : '?';
+      });
+    
+    // Store reference for updates (merged selection includes both enter and update)
+    specialElementBadgesRef.current = specialElementBadgesSelection.merge(specialElementBadges);
+
     // Create node labels - centered in nodes using transform for positioning
     const nodeLabels = nodeGroup
       .selectAll<SVGGElement, NodeData>('g.node-label')
@@ -465,6 +526,18 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
 
       // Update node label positions only (text updates handled by interval)
       nodeLabels.attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
+
+      // Update special element badge positions (positioned on outer edge, avoiding player badge area)
+      if (specialElementBadgesRef.current) {
+        specialElementBadgesRef.current.attr('transform', (d) => {
+          if (!d.x || !d.y) return 'translate(0, 0)';
+          // Position on bottom-left of node (opposite from player badge which is top-right)
+          const angle = Math.PI * 0.75; // 135 degrees (bottom-left)
+          const offsetX = Math.cos(angle) * (NODE_RADIUS + 5);
+          const offsetY = Math.sin(angle) * (NODE_RADIUS + 5);
+          return `translate(${d.x + offsetX}, ${d.y + offsetY})`;
+        });
+      }
     };
 
     simulation.on('tick', tick);
@@ -531,6 +604,22 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
         variantText.text(generateRandomString());
       }
     });
+
+    // Update special element badges (show icon if discovered, ? otherwise)
+    if (specialElementBadgesRef.current) {
+      specialElementBadgesRef.current.each(function (d) {
+        const g = d3.select(this);
+        const state = stateMap.get(d.biome as Biomes);
+        const isDiscovered = state?.discovered ?? false;
+        const isCurrentPosition = d.id === currentPosition.biome;
+        const shouldShowIcon = isDiscovered || isCurrentPosition;
+        
+        const iconText = g.select('.special-element-icon');
+        if (iconText.node()) {
+          iconText.text(shouldShowIcon ? getSpecialElementIcon(d.specialElement) : '?');
+        }
+      });
+    }
   }, [currentPosition, automaton]);
 
   // Update player indicator position reliably when current position changes

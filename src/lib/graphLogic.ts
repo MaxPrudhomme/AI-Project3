@@ -5,6 +5,7 @@ export interface NodeData {
   biome: string;
   variant: string;
   discovered: boolean;
+  specialElement: string | null;
   x?: number;
   y?: number;
   fx?: number | null;
