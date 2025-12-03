@@ -3,13 +3,14 @@ import * as d3 from 'd3-selection';
 import * as d3Force from 'd3-force';
 import * as d3Zoom from 'd3-zoom';
 import * as d3Drag from 'd3-drag';
-import { Automaton } from '@/lib/automaton';
+import { Automaton, type State } from '@/lib/automaton';
 import { Player } from '@/lib/player';
 import type { Biomes } from '@/lib/world';
 
 interface AutomatonGraphProps {
   automaton: Automaton;
   player: Player; // Kept for potential future use
+  currentPosition: State;
 }
 
 interface NodeData {
@@ -64,11 +65,12 @@ const generateRandomString = (): string => {
   return result;
 };
 
-export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphProps) {
+export function AutomatonGraph({ automaton, player: _player, currentPosition }: AutomatonGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3Force.Simulation<NodeData, LinkData> | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const randomTextIntervalRef = useRef<number | null>(null);
+  const currentPositionRef = useRef<State>(currentPosition);
   const [dimensions, setDimensions] = useState({ width: 1000, height: 600 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const nodeElementsRef = useRef<d3.Selection<SVGCircleElement, NodeData, SVGGElement, unknown> | null>(null);
@@ -110,6 +112,11 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
       links: linksData,
     };
   }, [automaton]);
+
+  // Update the ref whenever currentPosition changes
+  useEffect(() => {
+    currentPositionRef.current = currentPosition;
+  }, [currentPosition]);
 
   // Handle window resize
   useEffect(() => {
@@ -244,6 +251,52 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
     // Store reference for transition animations (merged selection includes all nodes)
     nodeElementsRef.current = nodeElements;
 
+    // Create pulsing ring indicator for current player position
+    // Add outer pulsing ring
+    nodeGroup
+      .append('circle')
+      .attr('class', 'player-indicator-ring')
+      .attr('r', NODE_RADIUS + 12)
+      .attr('fill', 'none')
+      .attr('stroke', '#22c55e')
+      .attr('stroke-width', 2.5)
+      .attr('opacity', 0.8)
+      .style('filter', 'drop-shadow(0 0 8px rgba(34, 197, 94, 0.8))')
+      .style('animation', 'pulse-ring 2s infinite ease-out');
+
+    // Add inner static ring
+    nodeGroup
+      .append('circle')
+      .attr('class', 'player-indicator-inner-ring')
+      .attr('r', NODE_RADIUS + 6)
+      .attr('fill', 'none')
+      .attr('stroke', '#22c55e')
+      .attr('stroke-width', 1)
+      .attr('opacity', 0.5)
+      .style('filter', 'drop-shadow(0 0 4px rgba(34, 197, 94, 0.5))');
+
+    // Add player badge/icon in the top-right of the node
+    const badge = nodeGroup
+      .append('g')
+      .attr('class', 'player-indicator-badge');
+    
+    badge
+      .append('circle')
+      .attr('r', 12)
+      .attr('fill', '#22c55e')
+      .attr('stroke', 'hsl(var(--background))')
+      .attr('stroke-width', 2)
+      .style('filter', 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3))');
+    
+    badge
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('font-size', '14px')
+      .attr('font-weight', 'bold')
+      .attr('fill', 'hsl(var(--background))')
+      .text('P');
+
     // Create node labels - centered in nodes using transform for positioning
     const nodeLabels = nodeGroup
       .selectAll<SVGGElement, NodeData>('g.node-label')
@@ -256,6 +309,10 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
       .each(function (d) {
         const g = d3.select(this);
         
+        // Check if this is the current position or discovered
+        const isCurrentPosition = d.id === currentPositionRef.current.biome;
+        const shouldShowBiome = d.discovered || isCurrentPosition;
+        
         // Add biome text - first line
         g.append('text')
           .attr('text-anchor', 'middle')
@@ -267,7 +324,7 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
           .attr('class', 'biome-text')
           .style('user-select', 'none')
           .style('pointer-events', 'none')
-          .text(d.discovered ? d.biome : generateRandomString());
+          .text(shouldShowBiome ? d.biome : generateRandomString());
         
         // Add variant text - second line
         g.append('text')
@@ -279,7 +336,7 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
           .attr('class', 'variant-text')
           .style('user-select', 'none')
           .style('pointer-events', 'none')
-          .text(d.discovered ? d.variant : generateRandomString());
+          .text(shouldShowBiome ? d.variant : generateRandomString());
       });
     
     nodeLabelsRef.current = nodeLabels;
@@ -422,36 +479,44 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
     // Start animation
     animate();
 
-    // Function to update random text for undiscovered nodes
+    // Function to update text for all nodes (handles discovered state changes)
     const updateRandomText = () => {
-      nodeLabels.each(function (d) {
+      if (!nodeLabelsRef.current) return;
+      
+      const states = automaton.getStates();
+      const stateMap = new Map(states.map(s => [s.biome, s]));
+      
+      nodeLabelsRef.current.each(function (d) {
         const g = d3.select(this);
-        const states = automaton.getStates();
-        const state = states.find(s => s.biome === d.id);
+        const state = stateMap.get(d.biome as Biomes);
         const isDiscovered = state?.discovered ?? false;
+        const isCurrentPosition = d.id === currentPositionRef.current.biome;
+        const shouldShowBiome = isDiscovered || isCurrentPosition;
         
-        if (!isDiscovered) {
-          const biomeText = g.select('.biome-text');
-          const variantText = g.select('.variant-text');
-          
+        const biomeText = g.select('.biome-text');
+        const variantText = g.select('.variant-text');
+        
+        if (shouldShowBiome) {
+          // Show real biome and variant text
+          biomeText.text(d.biome);
+          variantText.text(d.variant);
+        } else {
+          // Show random text for undiscovered nodes
           biomeText.text(generateRandomString());
           variantText.text(generateRandomString());
         }
       });
     };
 
-    // Start rapid random text updates for undiscovered nodes (every 100ms)
-    randomTextIntervalRef.current = window.setInterval(updateRandomText, 100);
+    // Start random text updates for undiscovered nodes (every 300ms - slower to reduce performance impact)
+    randomTextIntervalRef.current = window.setInterval(updateRandomText, 200);
 
     // Update function for simulation
     const tick = () => {
       // Update link paths
       linkElements.attr('d', (d) => getEdgePath(d));
 
-      const states = automaton.getStates();
-      const stateMap = new Map(states.map(s => [s.biome, s]));
-
-      // Update node positions and discovered state
+      // Update node positions
       nodeElements
         .attr('cx', (d) => d.x ?? 0)
         .attr('cy', (d) => d.y ?? 0)
@@ -461,30 +526,23 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
         })
         .style('filter', 'drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1))');
 
-      // Update node label positions and text - centered in nodes using transform
-      nodeLabels
-        .attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`)
-        .each(function (d) {
-          const g = d3.select(this);
-          const state = stateMap.get(d.biome as Biomes);
-          const isDiscovered = state?.discovered ?? false;
-          const wasDiscovered = d.discovered;
-          d.discovered = isDiscovered;
-          
-          // Update text when discovery state changes
-          if (isDiscovered !== wasDiscovered) {
-            const biomeText = g.select('.biome-text');
-            const variantText = g.select('.variant-text');
-            
-            if (isDiscovered) {
-              biomeText.text(d.biome);
-              variantText.text(d.variant);
-            } else {
-              biomeText.text(generateRandomString());
-              variantText.text(generateRandomString());
-            }
-          }
-        });
+      // Update node label positions only (text updates handled by interval)
+      nodeLabels.attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
+
+      // Update player indicator position - always find the current node using the ref
+      const currentNode = nodes.find(n => n.id === currentPositionRef.current.biome);
+      if (currentNode && currentNode.x && currentNode.y) {
+        container.select('.player-indicator-ring')
+          .attr('cx', currentNode.x)
+          .attr('cy', currentNode.y);
+        
+        container.select('.player-indicator-inner-ring')
+          .attr('cx', currentNode.x)
+          .attr('cy', currentNode.y);
+        
+        container.select('.player-indicator-badge')
+          .attr('transform', `translate(${currentNode.x + NODE_RADIUS - 5}, ${currentNode.y - NODE_RADIUS + 5})`);
+      }
     };
 
     simulation.on('tick', tick);
@@ -499,7 +557,39 @@ export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphPro
       }
       simulation.stop();
     };
-  }, [nodes, links, dimensions]);
+  }, [nodes, links, dimensions, automaton]);
+
+  // Update when current position changes (without rebuilding the whole graph)
+  useEffect(() => {
+    if (!nodeElementsRef.current || !nodeLabelsRef.current) return;
+
+    const states = automaton.getStates();
+    const stateMap = new Map(states.map(s => [s.biome, s]));
+
+    // Update node styling for current position
+    nodeElementsRef.current
+      .attr('stroke-width', (d) => d.id === currentPosition.biome ? 4 : 2);
+
+    // Update text labels for discovered/current nodes
+    nodeLabelsRef.current.each(function (d) {
+      const g = d3.select(this);
+      const state = stateMap.get(d.biome as Biomes);
+      const isDiscovered = state?.discovered ?? false;
+      const isCurrentPosition = d.id === currentPosition.biome;
+      const shouldShowBiome = isDiscovered || isCurrentPosition;
+
+      const biomeText = g.select('.biome-text');
+      const variantText = g.select('.variant-text');
+
+      if (shouldShowBiome) {
+        biomeText.text(d.biome);
+        variantText.text(d.variant);
+      } else {
+        biomeText.text(generateRandomString());
+        variantText.text(generateRandomString());
+      }
+    });
+  }, [currentPosition, automaton]);
 
   // Update hover state when hoveredNodeId changes
   useEffect(() => {

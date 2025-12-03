@@ -40,3 +40,19 @@
 .read-the-docs {
   color: #888;
 }
+
+@keyframes pulse-ring {
+  0% {
+    r: 62px;
+    opacity: 0.8;
+    stroke-width: 2.5px;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    r: 90px;
+    opacity: 0;
+    stroke-width: 1px;
+  }
+}

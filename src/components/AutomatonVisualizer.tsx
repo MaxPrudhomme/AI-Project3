@@ -39,7 +39,6 @@ export function AutomatonVisualizer() {
     
     setIsMoving(true);
     try {
-      const previousPosition = currentPosition;
       const newPosition = player.move();
       
       // Mark the new biome as discovered
@@ -81,6 +80,7 @@ export function AutomatonVisualizer() {
           <AutomatonGraph 
             automaton={automaton} 
             player={player}
+            currentPosition={currentPosition}
           />
         </TabsContent>
       </Tabs>
