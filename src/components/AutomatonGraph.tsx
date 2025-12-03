@@ -1,98 +1,117 @@
-import { useMemo } from 'react';
-import { ReactFlow, Background, Controls, type Node, type Edge } from 'reactflow';
+import { useEffect, useRef, useMemo } from 'react';
+import * as d3 from 'd3-selection';
 import * as d3Force from 'd3-force';
-import 'reactflow/dist/style.css';
+import * as d3Zoom from 'd3-zoom';
+import * as d3Drag from 'd3-drag';
+import * as d3Shape from 'd3-shape';
 import { Automaton } from '@/lib/automaton';
-import { CustomEdge } from './CustomEdge';
 
 interface AutomatonGraphProps {
   automaton: Automaton;
 }
 
-const edgeTypes = {
-  custom: CustomEdge,
+interface NodeData {
+  id: string;
+  biome: string;
+  variant: string;
+  x?: number;
+  y?: number;
+  fx?: number | null;
+  fy?: number | null;
+}
+
+interface LinkData {
+  id: string;
+  source: NodeData;
+  target: NodeData;
+  weight: number;
+}
+
+const NODE_RADIUS = 50;
+const ANIMATION_DURATION = 2000; // ms for one complete cycle
+const DOTS_PER_EDGE = 5; // Number of dots per edge for continuous flow
+const DOT_SPACING = 0.2; // Spacing between dots (as fraction of path length)
+
+// Color function based on biome
+const getBiomeColor = (biome: string): string => {
+  const colors: Record<string, string> = {
+    Ocean: '#0066cc',
+    Plains: '#90ee90',
+    Forest: '#228b22',
+    Mountain: '#8b7355',
+    Desert: '#edc9af',
+    Swamp: '#556b2f',
+    Taiga: '#2f4f4f',
+    Snowy: '#f0f8ff',
+    Beach: '#f4a460',
+    River: '#4682b4',
+    Lake: '#1e90ff',
+  };
+  return colors[biome] || '#666666';
 };
 
 export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
-  const { nodes, edges } = useMemo(() => {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const simulationRef = useRef<d3Force.Simulation<NodeData, LinkData> | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  const { nodes, links } = useMemo(() => {
     const states = automaton.getStates();
     
-    // Create initial nodes
-    const initialNodes: Node[] = states.map((state) => ({
-      id: state.biome,
-      position: { x: 0, y: 0 },
-      data: {
-        label: (
-          <div className="text-center flex flex-col items-center justify-center h-full w-full">
-            <div className="font-bold text-sm leading-tight">{state.biome}</div>
-            <div className="text-[10px] text-muted-foreground leading-tight mt-1">{state.variant}</div>
-          </div>
-        ),
-      },
-      style: {
-        background: '#ffffff',
-        border: '2px solid hsl(var(--primary))',
-        borderRadius: '50%',
-        width: 100,
-        height: 100,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-        color: 'hsl(var(--foreground))',
-        fontSize: '12px',
-      },
-    }));
-    
-    // Create edges for transitions
-    const edgesData: Edge[] = [];
+    const nodeMap = new Map<string, NodeData>();
     states.forEach((state) => {
-      state.transitions.forEach((transition) => {
-        const weight = transition.weight;
-        // Use brighter color for better visibility
-        const edgeColor = 'hsl(217, 91%, 60%)'; // Bright blue
-        const strokeWidth = Math.max(2, Math.min(5, weight * 10 + 2));
-        
-        edgesData.push({
-          id: `${state.biome}-${transition.to}`,
-          source: state.biome,
-          target: transition.to,
-          label: `${(weight * 100).toFixed(1)}%`,
-          type: 'custom',
-          animated: true,
-          style: {
-            strokeWidth,
-            stroke: edgeColor,
-            opacity: 1,
-          },
-          labelStyle: {
-            fill: '#ffffff',
-            fontWeight: 700,
-            fontSize: '11px',
-          },
-          labelBgStyle: {
-            fill: edgeColor,
-            fillOpacity: 1,
-            stroke: '#ffffff',
-            strokeWidth: 1.5,
-            rx: 6,
-            ry: 6,
-          },
-          zIndex: 10,
-        });
+      nodeMap.set(state.biome, {
+        id: state.biome,
+        biome: state.biome,
+        variant: state.variant,
       });
     });
-    
-    // Use d3-force to calculate positions
-    interface SimNode {
-      id: string;
-      x?: number;
-      y?: number;
-      fx?: number | null;
-      fy?: number | null;
-    }
-    
-    // Deterministic position based on node id hash
+
+    const linksData: LinkData[] = [];
+    states.forEach((state) => {
+      state.transitions.forEach((transition) => {
+        const source = nodeMap.get(state.biome);
+        const target = nodeMap.get(transition.to);
+        if (source && target) {
+          linksData.push({
+            id: `${state.biome}-${transition.to}`,
+            source,
+            target,
+            weight: transition.weight,
+          });
+        }
+      });
+    });
+
+    return {
+      nodes: Array.from(nodeMap.values()),
+      links: linksData,
+    };
+  }, [automaton]);
+
+  useEffect(() => {
+    if (!svgRef.current) return;
+
+    const svg = d3.select(svgRef.current);
+    const width = 1000;
+    const height = 600;
+
+    // Clear previous content
+    svg.selectAll('*').remove();
+
+    // Set up zoom behavior
+    const zoom = d3Zoom.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.2, 2])
+      .on('zoom', (event) => {
+        container.attr('transform', event.transform.toString());
+      });
+
+    svg.call(zoom);
+
+    // Create container group for zoom/pan
+    const container = svg.append('g');
+
+    // Initialize node positions using hash-based deterministic positioning
     const hashString = (str: string): number => {
       let hash = 0;
       for (let i = 0; i < str.length; i++) {
@@ -102,67 +121,264 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
       }
       return Math.abs(hash);
     };
-    
-    const simNodes: SimNode[] = initialNodes.map((node) => {
+
+    nodes.forEach((node) => {
       const hash = hashString(node.id);
       const angle = (hash % 360) * (Math.PI / 180);
-      const radius = 200 + (hash % 200);
-      return {
-        id: node.id,
-        x: 500 + radius * Math.cos(angle),
-        y: 400 + radius * Math.sin(angle),
-      };
+      const radius = 150 + (hash % 150);
+      node.x = width / 2 + radius * Math.cos(angle);
+      node.y = height / 2 + radius * Math.sin(angle);
     });
-    
-    // Create simulation links (copy of edges with string IDs that D3 will mutate)
-    const simLinks = edgesData.map((edge) => ({
-      source: edge.source,
-      target: edge.target,
-    }));
-    
-    const simulation = d3Force.forceSimulation(simNodes)
-      .force('link', d3Force.forceLink(simLinks).id((d: SimNode) => d.id).distance(250).strength(0.4))
-      .force('charge', d3Force.forceManyBody().strength(-600))
-      .force('center', d3Force.forceCenter(500, 400))
-      .force('collision', d3Force.forceCollide().radius(120))
-      .stop();
-    
-    // Run simulation
-    for (let i = 0; i < 300; i++) {
-      simulation.tick();
-    }
-    
-    // Update node positions from simulation
-    const positionedNodes: Node[] = initialNodes.map((node) => {
-      const simNode = simNodes.find((n) => n.id === node.id);
-      return {
-        ...node,
-        position: {
-          x: simNode?.x ?? 0,
-          y: simNode?.y ?? 0,
-        },
-      };
+
+    // Create force simulation
+    const simulation = d3Force.forceSimulation<NodeData>(nodes)
+      .force('link', d3Force.forceLink<NodeData, LinkData>(links)
+        .id((d) => d.id)
+        .distance(250)
+        .strength(0.4))
+      .force('charge', d3Force.forceManyBody().strength(-700))
+      .force('center', d3Force.forceCenter(width / 2, height / 2))
+      .force('collision', d3Force.forceCollide().radius(NODE_RADIUS + 20));
+
+    simulationRef.current = simulation;
+
+    // Create link group
+    const linkGroup = container.append('g').attr('class', 'links');
+    const nodeGroup = container.append('g').attr('class', 'nodes');
+
+    // Create links (invisible, just for path calculation)
+    const linkElements = linkGroup
+      .selectAll<SVGPathElement, LinkData>('path.link')
+      .data(links)
+      .enter()
+      .append('path')
+      .attr('class', 'link')
+      .attr('fill', 'none')
+      .attr('stroke', 'none');
+
+    // Create animated dots for links - multiple dots per edge
+    const linkDotsData: Array<{ link: LinkData; dotIndex: number }> = [];
+    links.forEach((link) => {
+      for (let i = 0; i < DOTS_PER_EDGE; i++) {
+        linkDotsData.push({ link, dotIndex: i });
+      }
     });
-    
-    return { nodes: positionedNodes, edges: edgesData };
-  }, [automaton]);
-  
+
+    const linkDots = linkGroup
+      .selectAll<SVGCircleElement, { link: LinkData; dotIndex: number }>('circle.link-dot')
+      .data(linkDotsData)
+      .enter()
+      .append('circle')
+      .attr('class', 'link-dot')
+      .attr('r', 4)
+      .attr('fill', (d) => getBiomeColor(d.link.source.biome));
+
+    // Create nodes
+    const nodeElements = nodeGroup
+      .selectAll<SVGCircleElement, NodeData>('circle.node')
+      .data(nodes)
+      .enter()
+      .append('circle')
+      .attr('class', 'node')
+      .attr('r', NODE_RADIUS)
+      .attr('fill', '#ffffff')
+      .attr('stroke', 'hsl(var(--primary))')
+      .attr('stroke-width', 2)
+      .style('cursor', 'move')
+      .style('filter', 'drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1))');
+
+    // Create node labels - centered in nodes using transform for positioning
+    const nodeLabels = nodeGroup
+      .selectAll<SVGGElement, NodeData>('g.node-label')
+      .data(nodes)
+      .enter()
+      .append('g')
+      .attr('class', 'node-label')
+      .each(function (d) {
+        const g = d3.select(this);
+        // Add biome text - first line
+        g.append('text')
+          .attr('text-anchor', 'middle')
+          .attr('dominant-baseline', 'middle')
+          .attr('y', -6)
+          .attr('font-size', '12px')
+          .attr('font-weight', 'bold')
+          .attr('fill', 'hsl(var(--foreground))')
+          .text(d.biome);
+        // Add variant text - second line
+        g.append('text')
+          .attr('text-anchor', 'middle')
+          .attr('dominant-baseline', 'middle')
+          .attr('y', 10)
+          .attr('font-size', '10px')
+          .attr('fill', 'hsl(var(--muted-foreground))')
+          .text(d.variant);
+      });
+
+    // Add drag behavior
+    const drag = d3Drag.drag<NodeData>()
+      .on('start', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      })
+      .on('drag', (event, d) => {
+        d.fx = event.x;
+        d.fy = event.y;
+      })
+      .on('end', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      });
+
+    nodeElements.call(drag);
+
+    // Function to check if a point is too close to any node
+    const isPointNearNode = (x: number, y: number, excludeIds: string[]): boolean => {
+      return nodes.some((node) => {
+        if (excludeIds.includes(node.id) || !node.x || !node.y) return false;
+        const dist = Math.sqrt(Math.pow(x - node.x, 2) + Math.pow(y - node.y, 2));
+        return dist < NODE_RADIUS + 5; // 5px buffer
+      });
+    };
+
+    // Function to calculate edge path avoiding nodes
+    const getEdgePath = (link: LinkData): string => {
+      const source = link.source;
+      const target = link.target;
+      
+      if (!source.x || !source.y || !target.x || !target.y) {
+        return '';
+      }
+
+      // Calculate angle from source to target
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const angle = Math.atan2(dy, dx);
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // Start and end points on node perimeters
+      const startX = source.x + Math.cos(angle) * NODE_RADIUS;
+      const startY = source.y + Math.sin(angle) * NODE_RADIUS;
+      const endX = target.x - Math.cos(angle) * NODE_RADIUS;
+      const endY = target.y - Math.sin(angle) * NODE_RADIUS;
+
+      // Perpendicular vector for offset
+      const perpX = -dy / distance;
+      const perpY = dx / distance;
+
+      // Check multiple points along the path for node intersections
+      let maxOffset = 0;
+      const excludeIds = [source.id, target.id];
+      
+      // Sample points along the direct path
+      for (let t = 0.1; t < 0.9; t += 0.1) {
+        const testX = startX + (endX - startX) * t;
+        const testY = startY + (endY - startY) * t;
+        
+        if (isPointNearNode(testX, testY, excludeIds)) {
+          // Find the closest node to this point
+          let minDist = Infinity;
+          for (const node of nodes) {
+            if (excludeIds.includes(node.id) || !node.x || !node.y) continue;
+            const dist = Math.sqrt(
+              Math.pow(testX - node.x, 2) + Math.pow(testY - node.y, 2)
+            );
+            minDist = Math.min(minDist, dist);
+          }
+          
+          // Calculate needed offset
+          const neededOffset = NODE_RADIUS + 10 - minDist;
+          maxOffset = Math.max(maxOffset, neededOffset);
+        }
+      }
+
+      // Apply offset with smooth curve
+      const offset = maxOffset;
+      const cp1x = startX + (endX - startX) * 0.3 + perpX * offset;
+      const cp1y = startY + (endY - startY) * 0.3 + perpY * offset;
+      const cp2x = startX + (endX - startX) * 0.7 + perpX * offset;
+      const cp2y = startY + (endY - startY) * 0.7 + perpY * offset;
+
+      // Create cubic bezier path
+      return `M ${startX},${startY} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${endX},${endY}`;
+    };
+
+    // Function to get point along path at given progress (0-1)
+    const getPointOnPath = (pathString: string, progress: number): [number, number] | null => {
+      const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      pathEl.setAttribute('d', pathString);
+      
+      try {
+        const length = pathEl.getTotalLength();
+        const point = pathEl.getPointAtLength(length * progress);
+        return [point.x, point.y];
+      } catch {
+        return null;
+      }
+    };
+
+    // Animation function for dots - continuous flow
+    let animationTime = 0;
+    const animate = () => {
+      animationTime += 16; // ~60fps
+      const baseProgress = (animationTime % ANIMATION_DURATION) / ANIMATION_DURATION;
+
+      linkDots.each(function (d) {
+        const pathString = getEdgePath(d.link);
+        // Stagger dots along the path
+        const dotProgress = (baseProgress + d.dotIndex * DOT_SPACING) % 1;
+        const point = getPointOnPath(pathString, dotProgress);
+        
+        if (point) {
+          d3.select(this)
+            .attr('cx', point[0])
+            .attr('cy', point[1]);
+        }
+      });
+
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    // Start animation
+    animate();
+
+    // Update function for simulation
+    const tick = () => {
+      // Update link paths
+      linkElements.attr('d', (d) => getEdgePath(d));
+
+      // Update node positions
+      nodeElements
+        .attr('cx', (d) => d.x ?? 0)
+        .attr('cy', (d) => d.y ?? 0);
+
+      // Update node label positions - centered in nodes using transform
+      nodeLabels
+        .attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
+    };
+
+    simulation.on('tick', tick);
+
+    // Cleanup
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      simulation.stop();
+    };
+  }, [nodes, links]);
+
   return (
     <div className="w-full h-[600px] border rounded-lg overflow-hidden bg-background">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        edgeTypes={edgeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        defaultViewport={{ x: 0, y: 0, zoom: 0.9 }}
-        minZoom={0.2}
-        maxZoom={2}
-      >
-        <Background gap={16} size={1} />
-        <Controls />
-      </ReactFlow>
+      <svg
+        ref={svgRef}
+        width="100%"
+        height="100%"
+        viewBox="0 0 1000 600"
+        style={{ display: 'block' }}
+      />
     </div>
   );
 }
-
