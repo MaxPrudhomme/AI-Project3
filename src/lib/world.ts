@@ -10,6 +10,7 @@ export const Biomes = {
     Beach: 'Beach',
     River: 'River',
     Lake: 'Lake',
+    Gateway: 'Gateway',
 } as const;
 
 export const Variants = {

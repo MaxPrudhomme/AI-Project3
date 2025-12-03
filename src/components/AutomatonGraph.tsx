@@ -15,7 +15,6 @@ import {
   DOT_SPACING,
   getBiomeColor,
   generateRandomString,
-  hashString,
   getEdgePath,
   getPointOnPath,
   getPathMidpoint,

@@ -1,11 +1,14 @@
 import { useState, useCallback, useRef } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
 import { Player } from '@/lib/player';
+import { Biomes } from '@/lib/world';
 import { AutomatonGraph } from './components/AutomatonGraph';
 import { Button } from '@/components/ui/button';
 import { NodeDetailsDrawer } from './components/NodeDetailsDrawer';
+import { InventoryDrawer } from './components/InventoryDrawer';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
+import { Package } from 'lucide-react';
 
 function App() {
   const [automaton] = useState<Automaton>(() => {
@@ -13,10 +16,13 @@ function App() {
     const states = auto.getStates();
     
     // Initialize player with random starting location - only from nodes with outgoing edges
-    const validStartingStates = states.filter(s => s.transitions.length > 0);
+    // Exclude Gateway from starting positions (it's the exit, not a starting point)
+    const validStartingStates = states.filter(s => 
+      s.transitions.length > 0 && s.biome !== Biomes.Gateway
+    );
     if (validStartingStates.length === 0) {
-      // Fallback: if somehow no states have outgoing edges, use first state
-      const firstState = states[0];
+      // Fallback: if somehow no states have outgoing edges, use first non-gateway state
+      const firstState = states.find(s => s.biome !== Biomes.Gateway) || states[0];
       firstState.discovered = true;
       return auto;
     }
@@ -29,16 +35,18 @@ function App() {
 
   const [player] = useState<Player>(() => {
     const states = automaton.getStates();
-    const discoveredState = states.find(s => s.discovered && s.transitions.length > 0);
+    const discoveredState = states.find(s => 
+      s.discovered && s.transitions.length > 0 && s.biome !== Biomes.Gateway
+    );
     if (!discoveredState) {
-      // Fallback: find first state with outgoing edges
-      const validState = states.find(s => s.transitions.length > 0);
+      // Fallback: find first state with outgoing edges (excluding Gateway)
+      const validState = states.find(s => s.transitions.length > 0 && s.biome !== Biomes.Gateway);
       if (validState) {
         validState.discovered = true;
         return new Player(validState);
       }
-      // Last resort: use first state (shouldn't happen due to automaton generation)
-      const firstState = states[0];
+      // Last resort: use first non-gateway state (shouldn't happen due to automaton generation)
+      const firstState = states.find(s => s.biome !== Biomes.Gateway) || states[0];
       firstState.discovered = true;
       return new Player(firstState);
     }
@@ -49,6 +57,7 @@ function App() {
   const [isMoving, setIsMoving] = useState(false);
   const [selectedNode, setSelectedNode] = useState<State | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   
   // Track discovered biomes to detect new discoveries
   const discoveredBiomesRef = useRef<Set<string>>((() => {
@@ -86,11 +95,7 @@ function App() {
       }
       
       setCurrentPosition(newPosition);
-      
-      // Reset moving state after animation duration
-      setTimeout(() => {
-        setIsMoving(false);
-      }, 1000);
+      setIsMoving(false);
     } catch (error) {
       console.error('Move failed:', error);
       setIsMoving(false);
@@ -104,6 +109,15 @@ function App() {
           isOpen={isDrawerOpen}
           onOpenChange={setIsDrawerOpen}
           node={selectedNode}
+        />
+        <InventoryDrawer 
+          isOpen={isInventoryOpen}
+          onOpenChange={setIsInventoryOpen}
+          player={player}
+          onInventoryChange={() => {
+            // Force re-render by updating a state
+            setCurrentPosition(player.getPosition());
+          }}
         />
         <AutomatonGraph 
           automaton={automaton} 
@@ -124,6 +138,15 @@ function App() {
               size="lg"
             >
               {isMoving ? 'Moving...' : 'Move'}
+            </Button>
+            <Button 
+              onClick={() => setIsInventoryOpen(true)}
+              variant="outline"
+              size="lg"
+              className="gap-2"
+            >
+              <Package className="h-4 w-4" />
+              Inventory
             </Button>
           </div>
         </div>
