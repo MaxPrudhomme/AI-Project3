@@ -2,46 +2,29 @@ import { useState } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AutomatonGraph } from './AutomatonGraph';
 
 export function AutomatonVisualizer() {
   const [automaton, setAutomaton] = useState<Automaton>(Automaton.createRandom());
 
-  const handleGenerateNew = () => {
-    setAutomaton(Automaton.createRandom());
-  };
-
   const states = automaton.getStates();
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Automaton Visualizer</h1>
-          <p className="text-muted-foreground mt-2">
-            Visualizing {states.length} states with their transitions
-          </p>
-        </div>
-        <Button onClick={handleGenerateNew}>
-          Generate New Automaton
-        </Button>
-      </div>
-
-      <Tabs defaultValue="cards" className="w-full">
-        <TabsList>
+    <div className="relative w-screen h-screen overflow-hidden">
+      <Tabs defaultValue="graph" className="w-full h-full">
+        <TabsList className="fixed top-4 right-4 z-50">
           <TabsTrigger value="cards">Card View</TabsTrigger>
           <TabsTrigger value="graph">Graph View</TabsTrigger>
         </TabsList>
-        <TabsContent value="cards" className="mt-6">
+        <TabsContent value="cards" className="w-full h-full p-6 pt-20 overflow-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {states.map((state) => (
               <StateCard key={state.biome} state={state} />
             ))}
           </div>
         </TabsContent>
-        <TabsContent value="graph" className="mt-6">
+        <TabsContent value="graph" className="w-full h-full m-0 p-0">
           <AutomatonGraph automaton={automaton} />
         </TabsContent>
       </Tabs>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import * as d3 from 'd3-selection';
 import * as d3Force from 'd3-force';
 import * as d3Zoom from 'd3-zoom';
@@ -54,6 +54,7 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3Force.Simulation<NodeData, LinkData> | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 1000, height: 600 });
 
   const { nodes, links } = useMemo(() => {
     const states = automaton.getStates();
@@ -89,21 +90,41 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
     };
   }, [automaton]);
 
+  // Handle window resize
+  useEffect(() => {
+    const updateDimensions = () => {
+      if (svgRef.current) {
+        setDimensions({
+          width: svgRef.current.clientWidth || window.innerWidth,
+          height: svgRef.current.clientHeight || window.innerHeight,
+        });
+      }
+    };
+
+    updateDimensions();
+    window.addEventListener('resize', updateDimensions);
+    return () => window.removeEventListener('resize', updateDimensions);
+  }, []);
+
   useEffect(() => {
     if (!svgRef.current) return;
 
     const svg = d3.select(svgRef.current);
-    const width = 1000;
-    const height = 600;
+    const width = dimensions.width;
+    const height = dimensions.height;
 
     // Clear previous content
     svg.selectAll('*').remove();
 
-    // Set up zoom behavior
+    // Set up zoom behavior (disabled scrollwheel)
     const zoom = d3Zoom.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.2, 2])
       .on('zoom', (event) => {
         container.attr('transform', event.transform.toString());
+      })
+      .filter((event) => {
+        // Disable scrollwheel zoom, allow drag and pinch
+        return event.type !== 'wheel';
       });
 
     svg.call(zoom);
@@ -368,15 +389,15 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
       }
       simulation.stop();
     };
-  }, [nodes, links]);
+  }, [nodes, links, dimensions]);
 
   return (
-    <div className="w-full h-[600px] border rounded-lg overflow-hidden bg-background">
+    <div className="w-full h-full overflow-hidden bg-background">
       <svg
         ref={svgRef}
         width="100%"
         height="100%"
-        viewBox="0 0 1000 600"
+        viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}
         style={{ display: 'block' }}
       />
     </div>
