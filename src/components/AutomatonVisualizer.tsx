@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AutomatonGraph } from './AutomatonGraph';
 import { Button } from '@/components/ui/button';
+import { NodeDetailsDrawer } from './NodeDetailsDrawer';
 import { toast } from 'sonner';
 
 export function AutomatonVisualizer() {
@@ -34,6 +35,8 @@ export function AutomatonVisualizer() {
 
   const [currentPosition, setCurrentPosition] = useState<State>(player.getPosition());
   const [isMoving, setIsMoving] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<State | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   
   // Track discovered biomes to detect new discoveries
   const discoveredBiomesRef = useRef<Set<string>>((() => {
@@ -86,6 +89,11 @@ export function AutomatonVisualizer() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden">
+      <NodeDetailsDrawer 
+        isOpen={isDrawerOpen}
+        onOpenChange={setIsDrawerOpen}
+        node={selectedNode}
+      />
       <Tabs defaultValue="graph" className="w-full h-full">
         <TabsList className="fixed top-4 right-4 z-50">
           <TabsTrigger value="cards">Card View</TabsTrigger>
@@ -103,6 +111,10 @@ export function AutomatonVisualizer() {
             automaton={automaton} 
             player={player}
             currentPosition={currentPosition}
+            onNodeClick={(node) => {
+              setSelectedNode(node);
+              setIsDrawerOpen(true);
+            }}
           />
         </TabsContent>
       </Tabs>

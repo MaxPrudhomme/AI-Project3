@@ -11,6 +11,7 @@ interface AutomatonGraphProps {
   automaton: Automaton;
   player: Player; // Kept for potential future use
   currentPosition: State;
+  onNodeClick?: (node: State) => void;
 }
 
 interface NodeData {
@@ -65,7 +66,7 @@ const generateRandomString = (): string => {
   return result;
 };
 
-export function AutomatonGraph({ automaton, player: _player, currentPosition }: AutomatonGraphProps) {
+export function AutomatonGraph({ automaton, player: _player, currentPosition, onNodeClick }: AutomatonGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3Force.Simulation<NodeData, LinkData> | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -377,9 +378,13 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
     
     nodeLabelsRef.current = nodeLabels;
 
+    // Track click timing to distinguish between click and drag
+    const clickStartTime = new Map<string, number>();
+
     // Add drag behavior
     const drag = d3Drag.drag<SVGCircleElement, NodeData>()
       .on('start', (event, d: NodeData) => {
+        clickStartTime.set(d.id, Date.now());
         if (!event.active) simulation.alphaTarget(0.3).restart();
         d.fx = d.x;
         d.fy = d.y;
@@ -390,8 +395,20 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
       })
       .on('end', (event, d: NodeData) => {
         if (!event.active) simulation.alphaTarget(0);
+        
+        // Check if this was a click (short duration and no significant movement)
+        const startTime = clickStartTime.get(d.id);
+        if (startTime && Date.now() - startTime < 300) {
+          const states = automaton.getStates();
+          const nodeState = states.find(s => s.biome === d.id);
+          if (nodeState && onNodeClick) {
+            onNodeClick(nodeState);
+          }
+        }
+        
         d.fx = null;
         d.fy = null;
+        clickStartTime.delete(d.id);
       });
 
     nodeElements.call(drag);
