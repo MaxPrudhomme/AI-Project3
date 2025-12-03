@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
 import { Player } from '@/lib/player';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AutomatonGraph } from './AutomatonGraph';
+import { Button } from '@/components/ui/button';
 
 export function AutomatonVisualizer() {
   const [automaton] = useState<Automaton>(() => {
@@ -18,7 +19,7 @@ export function AutomatonVisualizer() {
     return auto;
   });
 
-  const player = useMemo(() => {
+  const [player] = useState<Player>(() => {
     const states = automaton.getStates();
     const discoveredState = states.find(s => s.discovered);
     if (!discoveredState) {
@@ -28,7 +29,37 @@ export function AutomatonVisualizer() {
       return new Player(firstState);
     }
     return new Player(discoveredState);
-  }, [automaton]);
+  });
+
+  const [currentPosition, setCurrentPosition] = useState<State>(player.getPosition());
+  const [isMoving, setIsMoving] = useState(false);
+
+  const handleMove = useCallback(() => {
+    if (isMoving) return;
+    
+    setIsMoving(true);
+    try {
+      const previousPosition = currentPosition;
+      const newPosition = player.move();
+      
+      // Mark the new biome as discovered
+      const states = automaton.getStates();
+      const newState = states.find(s => s.biome === newPosition.biome);
+      if (newState) {
+        newState.discovered = true;
+      }
+      
+      setCurrentPosition(newPosition);
+      
+      // Reset moving state after animation duration
+      setTimeout(() => {
+        setIsMoving(false);
+      }, 1000);
+    } catch (error) {
+      console.error('Move failed:', error);
+      setIsMoving(false);
+    }
+  }, [player, currentPosition, isMoving, automaton]);
 
   const states = automaton.getStates();
 
@@ -47,9 +78,25 @@ export function AutomatonVisualizer() {
           </div>
         </TabsContent>
         <TabsContent value="graph" className="w-full h-full m-0 p-0">
-          <AutomatonGraph automaton={automaton} player={player} />
+          <AutomatonGraph 
+            automaton={automaton} 
+            player={player}
+          />
         </TabsContent>
       </Tabs>
+      
+      {/* Control Bar */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+        <div className="bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3">
+          <Button 
+            onClick={handleMove}
+            disabled={isMoving}
+            size="lg"
+          >
+            {isMoving ? 'Moving...' : 'Move'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

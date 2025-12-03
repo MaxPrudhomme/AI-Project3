@@ -9,7 +9,7 @@ import type { Biomes } from '@/lib/world';
 
 interface AutomatonGraphProps {
   automaton: Automaton;
-  player: Player;
+  player: Player; // Kept for potential future use
 }
 
 interface NodeData {
@@ -64,12 +64,17 @@ const generateRandomString = (): string => {
   return result;
 };
 
-export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
+export function AutomatonGraph({ automaton, player: _player }: AutomatonGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3Force.Simulation<NodeData, LinkData> | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const randomTextIntervalRef = useRef<number | null>(null);
   const [dimensions, setDimensions] = useState({ width: 1000, height: 600 });
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const nodeElementsRef = useRef<d3.Selection<SVGCircleElement, NodeData, SVGGElement, unknown> | null>(null);
+  const linkElementsRef = useRef<d3.Selection<SVGPathElement, LinkData, SVGGElement, unknown> | null>(null);
+  const linkDotsRef = useRef<d3.Selection<SVGCircleElement, { link: LinkData; dotIndex: number }, SVGGElement, unknown> | null>(null);
+  const nodeLabelsRef = useRef<d3.Selection<SVGGElement, NodeData, SVGGElement, unknown> | null>(null);
 
   const { nodes, links } = useMemo(() => {
     const states = automaton.getStates();
@@ -104,7 +109,7 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
       nodes: Array.from(nodeMap.values()),
       links: linksData,
     };
-  }, [automaton, player]);
+  }, [automaton]);
 
   // Handle window resize
   useEffect(() => {
@@ -192,6 +197,8 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
       .attr('class', 'link')
       .attr('fill', 'none')
       .attr('stroke', 'none');
+    
+    linkElementsRef.current = linkElements;
 
     // Create animated dots for links - multiple dots per edge
     const linkDotsData: Array<{ link: LinkData; dotIndex: number }> = [];
@@ -213,11 +220,15 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
         const sourceNode = nodes.find(n => n.id === d.link.source.id);
         return sourceNode ? getBiomeColor(sourceNode.biome) : '#666666';
       });
+    
+    linkDotsRef.current = linkDots;
 
     // Create nodes
-    const nodeElements = nodeGroup
+    const nodeSelection = nodeGroup
       .selectAll<SVGCircleElement, NodeData>('circle.node')
-      .data(nodes)
+      .data(nodes);
+    
+    const nodeElements = nodeSelection
       .enter()
       .append('circle')
       .attr('class', 'node')
@@ -226,7 +237,12 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
       .attr('stroke', 'hsl(var(--primary))')
       .attr('stroke-width', 2)
       .style('cursor', 'move')
-      .style('filter', 'drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1))');
+      .style('filter', 'drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1))')
+      .style('transition', 'opacity 0.3s ease, filter 0.3s ease')
+      .merge(nodeSelection);
+    
+    // Store reference for transition animations (merged selection includes all nodes)
+    nodeElementsRef.current = nodeElements;
 
     // Create node labels - centered in nodes using transform for positioning
     const nodeLabels = nodeGroup
@@ -235,6 +251,8 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
       .enter()
       .append('g')
       .attr('class', 'node-label')
+      .style('pointer-events', 'none')
+      .style('user-select', 'none')
       .each(function (d) {
         const g = d3.select(this);
         
@@ -247,6 +265,8 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
           .attr('font-weight', 'bold')
           .attr('fill', 'hsl(var(--foreground))')
           .attr('class', 'biome-text')
+          .style('user-select', 'none')
+          .style('pointer-events', 'none')
           .text(d.discovered ? d.biome : generateRandomString());
         
         // Add variant text - second line
@@ -257,8 +277,12 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
           .attr('font-size', '10px')
           .attr('fill', 'hsl(var(--muted-foreground))')
           .attr('class', 'variant-text')
+          .style('user-select', 'none')
+          .style('pointer-events', 'none')
           .text(d.discovered ? d.variant : generateRandomString());
       });
+    
+    nodeLabelsRef.current = nodeLabels;
 
     // Add drag behavior
     const drag = d3Drag.drag<SVGCircleElement, NodeData>()
@@ -278,6 +302,15 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
       });
 
     nodeElements.call(drag);
+
+    // Add hover event handlers
+    nodeElements
+      .on('mouseenter', (_event, d: NodeData) => {
+        setHoveredNodeId(d.id);
+      })
+      .on('mouseleave', () => {
+        setHoveredNodeId(null);
+      });
 
     // Function to check if a point is too close to any node
     const isPointNearNode = (x: number, y: number, excludeIds: string[]): boolean => {
@@ -425,7 +458,8 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
         .attr('fill', (d) => {
           // Always use biome color, regardless of discovered state
           return getBiomeColor(d.biome);
-        });
+        })
+        .style('filter', 'drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1))');
 
       // Update node label positions and text - centered in nodes using transform
       nodeLabels
@@ -466,6 +500,65 @@ export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
       simulation.stop();
     };
   }, [nodes, links, dimensions]);
+
+  // Update hover state when hoveredNodeId changes
+  useEffect(() => {
+    if (!nodeElementsRef.current || !linkElementsRef.current || !linkDotsRef.current || !nodeLabelsRef.current) return;
+
+    const getConnectedNodeIds = (nodeId: string): Set<string> => {
+      const connected = new Set<string>();
+      links.forEach((link) => {
+        if (link.source.id === nodeId) {
+          connected.add(link.target.id);
+        }
+        if (link.target.id === nodeId) {
+          connected.add(link.source.id);
+        }
+      });
+      return connected;
+    };
+
+    if (!hoveredNodeId) {
+      // Reset all to full opacity
+      nodeElementsRef.current.style('opacity', 1);
+      linkElementsRef.current.style('opacity', 1);
+      linkDotsRef.current.style('opacity', 1);
+      nodeLabelsRef.current.style('opacity', 1);
+      return;
+    }
+
+    const connectedIds = getConnectedNodeIds(hoveredNodeId);
+    connectedIds.add(hoveredNodeId); // Include the hovered node itself
+
+    // Update nodes
+    nodeElementsRef.current.style('opacity', (d) => {
+      if (d.id === hoveredNodeId) return 1; // Hovered node: full opacity
+      if (connectedIds.has(d.id)) return 0.7; // Connected nodes: slightly lower
+      return 0.2; // Other nodes: much lower
+    });
+
+    // Update links and dots
+    linkElementsRef.current.style('opacity', (d) => {
+      const sourceConnected = connectedIds.has(d.source.id);
+      const targetConnected = connectedIds.has(d.target.id);
+      if (sourceConnected && targetConnected) return 1; // Edge between connected nodes
+      return 0.2; // Other edges
+    });
+
+    linkDotsRef.current.style('opacity', (d) => {
+      const sourceConnected = connectedIds.has(d.link.source.id);
+      const targetConnected = connectedIds.has(d.link.target.id);
+      if (sourceConnected && targetConnected) return 1; // Dots on connected edges
+      return 0.2; // Dots on other edges
+    });
+
+    // Update labels
+    nodeLabelsRef.current.style('opacity', (d) => {
+      if (d.id === hoveredNodeId) return 1; // Hovered node label: full opacity
+      if (connectedIds.has(d.id)) return 0.7; // Connected node labels: slightly lower
+      return 0.2; // Other node labels: much lower
+    });
+  }, [hoveredNodeId, links]);
 
   return (
     <div className="w-full h-full overflow-hidden bg-background">
