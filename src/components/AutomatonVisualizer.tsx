@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
 import { Player } from '@/lib/player';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AutomatonGraph } from './AutomatonGraph';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 export function AutomatonVisualizer() {
   const [automaton] = useState<Automaton>(() => {
@@ -33,6 +34,18 @@ export function AutomatonVisualizer() {
 
   const [currentPosition, setCurrentPosition] = useState<State>(player.getPosition());
   const [isMoving, setIsMoving] = useState(false);
+  
+  // Track discovered biomes to detect new discoveries
+  const discoveredBiomesRef = useRef<Set<string>>((() => {
+    const initialSet = new Set<string>();
+    const states = automaton.getStates();
+    states.forEach(state => {
+      if (state.discovered) {
+        initialSet.add(state.biome);
+      }
+    });
+    return initialSet;
+  })());
 
   const handleMove = useCallback(() => {
     if (isMoving) return;
@@ -45,7 +58,16 @@ export function AutomatonVisualizer() {
       const states = automaton.getStates();
       const newState = states.find(s => s.biome === newPosition.biome);
       if (newState) {
+        const wasNewDiscovery = !discoveredBiomesRef.current.has(newState.biome);
         newState.discovered = true;
+        discoveredBiomesRef.current.add(newState.biome);
+        
+        // Show notification if this is a newly discovered biome
+        if (wasNewDiscovery) {
+          toast.success(`Discovered new biome: ${newState.biome}!`, {
+            description: `You've entered the ${newState.biome} biome.`,
+          });
+        }
       }
       
       setCurrentPosition(newPosition);

@@ -77,6 +77,7 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
   const linkElementsRef = useRef<d3.Selection<SVGPathElement, LinkData, SVGGElement, unknown> | null>(null);
   const linkDotsRef = useRef<d3.Selection<SVGCircleElement, { link: LinkData; dotIndex: number }, SVGGElement, unknown> | null>(null);
   const nodeLabelsRef = useRef<d3.Selection<SVGGElement, NodeData, SVGGElement, unknown> | null>(null);
+  const edgeLabelsRef = useRef<d3.Selection<SVGGElement, LinkData, SVGGElement, unknown> | null>(null);
 
   const { nodes, links } = useMemo(() => {
     const states = automaton.getStates();
@@ -229,6 +230,41 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
       });
     
     linkDotsRef.current = linkDots;
+
+    // Create edge labels group AFTER dots so labels appear on top
+    const edgeLabelsGroup = container.append('g').attr('class', 'edge-labels');
+    
+    // Create edge labels (initially hidden, shown on hover)
+    const edgeLabels = edgeLabelsGroup
+      .selectAll<SVGGElement, LinkData>('g.edge-label')
+      .data(links)
+      .enter()
+      .append('g')
+      .attr('class', 'edge-label')
+      .style('opacity', 0)
+      .style('pointer-events', 'none');
+    
+    // Add background rectangle for label
+    edgeLabels
+      .append('rect')
+      .attr('rx', 4)
+      .attr('ry', 4)
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#e5e7eb')
+      .attr('stroke-width', 1)
+      .style('filter', 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1))');
+    
+    // Add text for label
+    edgeLabels
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('font-size', '11px')
+      .attr('font-weight', '600')
+      .attr('fill', '#1f2937')
+      .text('???');
+    
+    edgeLabelsRef.current = edgeLabels;
 
     // Create nodes
     const nodeSelection = nodeGroup
@@ -454,6 +490,23 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
       }
     };
 
+    // Function to get midpoint and angle of path for label positioning
+    const getPathMidpoint = (pathString: string): { x: number; y: number; angle: number } | null => {
+      const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      pathEl.setAttribute('d', pathString);
+      
+      try {
+        const length = pathEl.getTotalLength();
+        const midpoint = pathEl.getPointAtLength(length * 0.5);
+        const pointBefore = pathEl.getPointAtLength(length * 0.49);
+        const pointAfter = pathEl.getPointAtLength(length * 0.51);
+        const angle = Math.atan2(pointAfter.y - pointBefore.y, pointAfter.x - pointBefore.x);
+        return { x: midpoint.x, y: midpoint.y, angle };
+      } catch {
+        return null;
+      }
+    };
+
     // Animation function for dots - continuous flow
     let animationTime = 0;
     const animate = () => {
@@ -516,6 +569,28 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
       // Update link paths
       linkElements.attr('d', (d) => getEdgePath(d));
 
+      // Update edge label positions
+      edgeLabels.each(function (d) {
+        const pathString = getEdgePath(d);
+        const midpoint = getPathMidpoint(pathString);
+        if (midpoint) {
+          const g = d3.select(this);
+          const text = g.select('text');
+          const bbox = (text.node() as SVGTextElement)?.getBBox();
+          const padding = 4;
+          const width = bbox ? bbox.width + padding * 2 : 40;
+          const height = bbox ? bbox.height + padding * 2 : 20;
+          
+          // Keep label horizontal, just translate to midpoint
+          g.attr('transform', `translate(${midpoint.x}, ${midpoint.y})`);
+          g.select('rect')
+            .attr('x', -width / 2)
+            .attr('y', -height / 2)
+            .attr('width', width)
+            .attr('height', height);
+        }
+      });
+
       // Update node positions
       nodeElements
         .attr('cx', (d) => d.x ?? 0)
@@ -528,8 +603,12 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
 
       // Update node label positions only (text updates handled by interval)
       nodeLabels.attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
+    };
 
-      // Update player indicator position - always find the current node using the ref
+    simulation.on('tick', tick);
+    
+    // Function to update player indicator position
+    const updatePlayerIndicator = () => {
       const currentNode = nodes.find(n => n.id === currentPositionRef.current.biome);
       if (currentNode && currentNode.x && currentNode.y) {
         container.select('.player-indicator-ring')
@@ -544,8 +623,9 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
           .attr('transform', `translate(${currentNode.x + NODE_RADIUS - 5}, ${currentNode.y - NODE_RADIUS + 5})`);
       }
     };
-
-    simulation.on('tick', tick);
+    
+    // Update player indicator on each simulation tick as well
+    simulation.on('tick.playerIndicator', updatePlayerIndicator);
 
     // Cleanup
     return () => {
@@ -591,9 +671,36 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
     });
   }, [currentPosition, automaton]);
 
+  // Update player indicator position reliably when current position changes
+  useEffect(() => {
+    // Store the current position in a ref so tick function can access it
+    currentPositionRef.current = currentPosition;
+    
+    // Find the current node and update indicator position immediately
+    const currentNode = nodes.find(n => n.id === currentPosition.biome);
+    if (currentNode && currentNode.x && currentNode.y) {
+      d3.select(svgRef.current)
+        .select('.player-indicator-ring')
+        .attr('cx', currentNode.x)
+        .attr('cy', currentNode.y);
+      
+      d3.select(svgRef.current)
+        .select('.player-indicator-inner-ring')
+        .attr('cx', currentNode.x)
+        .attr('cy', currentNode.y);
+      
+      d3.select(svgRef.current)
+        .select('.player-indicator-badge')
+        .attr('transform', `translate(${currentNode.x + NODE_RADIUS - 5}, ${currentNode.y - NODE_RADIUS + 5})`);
+    }
+  }, [currentPosition, nodes]);
+
   // Update hover state when hoveredNodeId changes
   useEffect(() => {
-    if (!nodeElementsRef.current || !linkElementsRef.current || !linkDotsRef.current || !nodeLabelsRef.current) return;
+    if (!nodeElementsRef.current || !linkElementsRef.current || !linkDotsRef.current || !nodeLabelsRef.current || !edgeLabelsRef.current) return;
+
+    const states = automaton.getStates();
+    const stateMap = new Map(states.map(s => [s.biome, s]));
 
     const getConnectedNodeIds = (nodeId: string): Set<string> => {
       const connected = new Set<string>();
@@ -614,6 +721,7 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
       linkElementsRef.current.style('opacity', 1);
       linkDotsRef.current.style('opacity', 1);
       nodeLabelsRef.current.style('opacity', 1);
+      edgeLabelsRef.current.style('opacity', 0);
       return;
     }
 
@@ -648,7 +756,47 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition }: 
       if (connectedIds.has(d.id)) return 0.7; // Connected node labels: slightly lower
       return 0.2; // Other node labels: much lower
     });
-  }, [hoveredNodeId, links]);
+
+    // Update edge labels - show probabilities for outgoing edges from hovered node
+    edgeLabelsRef.current.each(function (d) {
+      const g = d3.select(this);
+      const text = g.select('text');
+      const rect = g.select('rect');
+      const isOutgoingEdge = d.source.id === hoveredNodeId;
+      
+      if (isOutgoingEdge) {
+        // Check if both source and target are discovered
+        const sourceState = stateMap.get(d.source.id as Biomes);
+        const targetState = stateMap.get(d.target.id as Biomes);
+        const sourceDiscovered = sourceState?.discovered ?? false;
+        const targetDiscovered = targetState?.discovered ?? false;
+        
+        if (sourceDiscovered && targetDiscovered) {
+          // Show probability as percentage
+          const percentage = (d.weight * 100).toFixed(1);
+          text.text(`${percentage}%`);
+        } else {
+          // Show unknown
+          text.text('???');
+        }
+        
+        // Update rectangle size based on text content
+        const bbox = (text.node() as SVGTextElement)?.getBBox();
+        const padding = 4;
+        const width = bbox ? bbox.width + padding * 2 : 40;
+        const height = bbox ? bbox.height + padding * 2 : 20;
+        rect
+          .attr('x', -width / 2)
+          .attr('y', -height / 2)
+          .attr('width', width)
+          .attr('height', height);
+        
+        g.style('opacity', 1);
+      } else {
+        g.style('opacity', 0);
+      }
+    });
+  }, [hoveredNodeId, links, automaton, currentPosition]);
 
   return (
     <div className="w-full h-full overflow-hidden bg-background">
