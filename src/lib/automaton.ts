@@ -4,11 +4,12 @@ interface State {
     biome: Biomes;
     variant: Variants;
     transitions: Transition[];
+    discovered: boolean;
 }
 
 interface Transition {
-    from: Biomes;
-    to: Biomes;
+    from: State;
+    to: State;
     weight: number;
 }
 
@@ -29,6 +30,7 @@ class Automaton {
             biome,
             variant: Variants.Default,
             transitions: [],
+            discovered: false,
         }));
 
         const getRandomConnectionCount = (): number => {
@@ -39,6 +41,9 @@ class Automaton {
             if (rand < 0.95) return 3;
             return 4;
         };
+
+        // Map biomes to their corresponding state objects
+        const stateToBiome = new Map(states.map(s => [s.biome, s]));
 
         states.forEach((state) => {
             const connectionCount = getRandomConnectionCount();
@@ -55,10 +60,46 @@ class Automaton {
                 : rawWeights;
 
             state.transitions = selectedTargets.map((target, index) => ({
-                from: state.biome,
-                to: target,
+                from: state,
+                to: stateToBiome.get(target)!,
                 weight: normalizedWeights[index],
             }));
+        });
+
+        // Ensure every node has at least one connection (either incoming or outgoing)
+        states.forEach((state) => {
+            const hasOutgoing = state.transitions.length > 0;
+            
+            // Check if this node has any incoming connections
+            const hasIncoming = states.some((otherState) => 
+                otherState.transitions.some((transition) => transition.to.biome === state.biome)
+            );
+
+            // If node has neither outgoing nor incoming connections, add at least one
+            if (!hasOutgoing && !hasIncoming) {
+                // Add an outgoing connection to a random other state
+                const possibleTargets = biomeArray.filter((b) => b !== state.biome);
+                const randomTarget = possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
+                const targetState = stateToBiome.get(randomTarget)!;
+                
+                state.transitions.push({
+                    from: state,
+                    to: targetState,
+                    weight: 1.0,
+                });
+            }
+        });
+
+        // Normalize weights after ensuring connectivity
+        states.forEach((state) => {
+            if (state.transitions.length > 0) {
+                const sum = state.transitions.reduce((acc, t) => acc + t.weight, 0);
+                if (sum > 0) {
+                    state.transitions.forEach((transition) => {
+                        transition.weight = transition.weight / sum;
+                    });
+                }
+            }
         });
 
         return new Automaton(states);

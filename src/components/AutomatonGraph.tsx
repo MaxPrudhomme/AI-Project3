@@ -3,17 +3,20 @@ import * as d3 from 'd3-selection';
 import * as d3Force from 'd3-force';
 import * as d3Zoom from 'd3-zoom';
 import * as d3Drag from 'd3-drag';
-import * as d3Shape from 'd3-shape';
 import { Automaton } from '@/lib/automaton';
+import { Player } from '@/lib/player';
+import type { Biomes } from '@/lib/world';
 
 interface AutomatonGraphProps {
   automaton: Automaton;
+  player: Player;
 }
 
 interface NodeData {
   id: string;
   biome: string;
   variant: string;
+  discovered: boolean;
   x?: number;
   y?: number;
   fx?: number | null;
@@ -28,32 +31,44 @@ interface LinkData {
 }
 
 const NODE_RADIUS = 50;
-const ANIMATION_DURATION = 2000; // ms for one complete cycle
+const ANIMATION_DURATION = 4000; // ms for one complete cycle
 const DOTS_PER_EDGE = 5; // Number of dots per edge for continuous flow
 const DOT_SPACING = 0.2; // Spacing between dots (as fraction of path length)
 
-// Color function based on biome
+// Generate a deterministic random color based on biome name (hash-based)
 const getBiomeColor = (biome: string): string => {
-  const colors: Record<string, string> = {
-    Ocean: '#0066cc',
-    Plains: '#90ee90',
-    Forest: '#228b22',
-    Mountain: '#8b7355',
-    Desert: '#edc9af',
-    Swamp: '#556b2f',
-    Taiga: '#2f4f4f',
-    Snowy: '#f0f8ff',
-    Beach: '#f4a460',
-    River: '#4682b4',
-    Lake: '#1e90ff',
-  };
-  return colors[biome] || '#666666';
+  // Hash function for deterministic randomness
+  let hash = 0;
+  for (let i = 0; i < biome.length; i++) {
+    const char = biome.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  
+  // Use hash to generate HSL color with good saturation and lightness
+  const hue = Math.abs(hash) % 360;
+  const saturation = 50 + (Math.abs(hash) % 30); // 50-80%
+  const lightness = 40 + (Math.abs(hash >> 8) % 30); // 40-70%
+  
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 };
 
-export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
+// Generate random string of 8-10 characters
+const generateRandomString = (): string => {
+  const length = 8 + Math.floor(Math.random() * 3); // 8-10 characters
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+export function AutomatonGraph({ automaton, player }: AutomatonGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3Force.Simulation<NodeData, LinkData> | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const randomTextIntervalRef = useRef<number | null>(null);
   const [dimensions, setDimensions] = useState({ width: 1000, height: 600 });
 
   const { nodes, links } = useMemo(() => {
@@ -65,6 +80,7 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
         id: state.biome,
         biome: state.biome,
         variant: state.variant,
+        discovered: state.discovered,
       });
     });
 
@@ -72,10 +88,10 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
     states.forEach((state) => {
       state.transitions.forEach((transition) => {
         const source = nodeMap.get(state.biome);
-        const target = nodeMap.get(transition.to);
+        const target = nodeMap.get(transition.to.biome);
         if (source && target) {
           linksData.push({
-            id: `${state.biome}-${transition.to}`,
+            id: `${state.biome}-${transition.to.biome}`,
             source,
             target,
             weight: transition.weight,
@@ -88,7 +104,7 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
       nodes: Array.from(nodeMap.values()),
       links: linksData,
     };
-  }, [automaton]);
+  }, [automaton, player]);
 
   // Handle window resize
   useEffect(() => {
@@ -192,7 +208,11 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
       .append('circle')
       .attr('class', 'link-dot')
       .attr('r', 4)
-      .attr('fill', (d) => getBiomeColor(d.link.source.biome));
+      .attr('fill', (d) => {
+        // Use the source node's color from the nodes array
+        const sourceNode = nodes.find(n => n.id === d.link.source.id);
+        return sourceNode ? getBiomeColor(sourceNode.biome) : '#666666';
+      });
 
     // Create nodes
     const nodeElements = nodeGroup
@@ -202,7 +222,7 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
       .append('circle')
       .attr('class', 'node')
       .attr('r', NODE_RADIUS)
-      .attr('fill', '#ffffff')
+      .attr('fill', (d) => getBiomeColor(d.biome))
       .attr('stroke', 'hsl(var(--primary))')
       .attr('stroke-width', 2)
       .style('cursor', 'move')
@@ -217,6 +237,7 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
       .attr('class', 'node-label')
       .each(function (d) {
         const g = d3.select(this);
+        
         // Add biome text - first line
         g.append('text')
           .attr('text-anchor', 'middle')
@@ -225,7 +246,9 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
           .attr('font-size', '12px')
           .attr('font-weight', 'bold')
           .attr('fill', 'hsl(var(--foreground))')
-          .text(d.biome);
+          .attr('class', 'biome-text')
+          .text(d.discovered ? d.biome : generateRandomString());
+        
         // Add variant text - second line
         g.append('text')
           .attr('text-anchor', 'middle')
@@ -233,21 +256,22 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
           .attr('y', 10)
           .attr('font-size', '10px')
           .attr('fill', 'hsl(var(--muted-foreground))')
-          .text(d.variant);
+          .attr('class', 'variant-text')
+          .text(d.discovered ? d.variant : generateRandomString());
       });
 
     // Add drag behavior
-    const drag = d3Drag.drag<NodeData>()
-      .on('start', (event, d) => {
+    const drag = d3Drag.drag<SVGCircleElement, NodeData>()
+      .on('start', (event, d: NodeData) => {
         if (!event.active) simulation.alphaTarget(0.3).restart();
         d.fx = d.x;
         d.fy = d.y;
       })
-      .on('drag', (event, d) => {
+      .on('drag', (event, d: NodeData) => {
         d.fx = event.x;
         d.fy = event.y;
       })
-      .on('end', (event, d) => {
+      .on('end', (event, d: NodeData) => {
         if (!event.active) simulation.alphaTarget(0);
         d.fx = null;
         d.fy = null;
@@ -365,19 +389,68 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
     // Start animation
     animate();
 
+    // Function to update random text for undiscovered nodes
+    const updateRandomText = () => {
+      nodeLabels.each(function (d) {
+        const g = d3.select(this);
+        const states = automaton.getStates();
+        const state = states.find(s => s.biome === d.id);
+        const isDiscovered = state?.discovered ?? false;
+        
+        if (!isDiscovered) {
+          const biomeText = g.select('.biome-text');
+          const variantText = g.select('.variant-text');
+          
+          biomeText.text(generateRandomString());
+          variantText.text(generateRandomString());
+        }
+      });
+    };
+
+    // Start rapid random text updates for undiscovered nodes (every 100ms)
+    randomTextIntervalRef.current = window.setInterval(updateRandomText, 100);
+
     // Update function for simulation
     const tick = () => {
       // Update link paths
       linkElements.attr('d', (d) => getEdgePath(d));
 
-      // Update node positions
+      const states = automaton.getStates();
+      const stateMap = new Map(states.map(s => [s.biome, s]));
+
+      // Update node positions and discovered state
       nodeElements
         .attr('cx', (d) => d.x ?? 0)
-        .attr('cy', (d) => d.y ?? 0);
+        .attr('cy', (d) => d.y ?? 0)
+        .attr('fill', (d) => {
+          // Always use biome color, regardless of discovered state
+          return getBiomeColor(d.biome);
+        });
 
-      // Update node label positions - centered in nodes using transform
+      // Update node label positions and text - centered in nodes using transform
       nodeLabels
-        .attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
+        .attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`)
+        .each(function (d) {
+          const g = d3.select(this);
+          const state = stateMap.get(d.biome as Biomes);
+          const isDiscovered = state?.discovered ?? false;
+          const wasDiscovered = d.discovered;
+          d.discovered = isDiscovered;
+          
+          // Update text when discovery state changes
+          if (isDiscovered !== wasDiscovered) {
+            const biomeText = g.select('.biome-text');
+            const variantText = g.select('.variant-text');
+            
+            if (isDiscovered) {
+              biomeText.text(d.biome);
+              variantText.text(d.variant);
+            } else {
+              biomeText.text(generateRandomString());
+              variantText.text(generateRandomString());
+            }
+          }
+        });
     };
 
     simulation.on('tick', tick);
@@ -386,6 +459,9 @@ export function AutomatonGraph({ automaton }: AutomatonGraphProps) {
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (randomTextIntervalRef.current) {
+        clearInterval(randomTextIntervalRef.current);
       }
       simulation.stop();
     };

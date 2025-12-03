@@ -1,12 +1,34 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
+import { Player } from '@/lib/player';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AutomatonGraph } from './AutomatonGraph';
 
 export function AutomatonVisualizer() {
-  const [automaton, setAutomaton] = useState<Automaton>(Automaton.createRandom());
+  const [automaton] = useState<Automaton>(() => {
+    const auto = Automaton.createRandom();
+    const states = auto.getStates();
+    
+    // Initialize player with random starting location
+    const randomState = states[Math.floor(Math.random() * states.length)];
+    randomState.discovered = true;
+    
+    return auto;
+  });
+
+  const player = useMemo(() => {
+    const states = automaton.getStates();
+    const discoveredState = states.find(s => s.discovered);
+    if (!discoveredState) {
+      // Fallback: use first state if somehow none are discovered
+      const firstState = states[0];
+      firstState.discovered = true;
+      return new Player(firstState);
+    }
+    return new Player(discoveredState);
+  }, [automaton]);
 
   const states = automaton.getStates();
 
@@ -25,7 +47,7 @@ export function AutomatonVisualizer() {
           </div>
         </TabsContent>
         <TabsContent value="graph" className="w-full h-full m-0 p-0">
-          <AutomatonGraph automaton={automaton} />
+          <AutomatonGraph automaton={automaton} player={player} />
         </TabsContent>
       </Tabs>
     </div>
@@ -64,7 +86,7 @@ function StateCard({ state }: StateCardProps) {
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-muted-foreground">→</span>
-                    <span className="font-medium">{transition.to}</span>
+                    <span className="font-medium">{transition.to.biome}</span>
                   </div>
                   <Badge variant="outline" className="text-xs">
                     {(transition.weight * 100).toFixed(1)}%
