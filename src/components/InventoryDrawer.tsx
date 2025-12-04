@@ -16,6 +16,7 @@ interface InventoryDrawerProps {
   player: Player;
   onInventoryChange?: () => void;
   onEffectActivated?: (effect: ActiveEffect) => void;
+  onItemUsed?: (item: Item) => void;
   effectContext?: EffectContext;
 }
 
@@ -35,7 +36,7 @@ const rarityBorderColors = {
   legendary: 'border-yellow-400',
 };
 
-export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChange, onEffectActivated, effectContext }: InventoryDrawerProps) {
+export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChange, onEffectActivated, onItemUsed, effectContext }: InventoryDrawerProps) {
   const [draggedSlot, setDraggedSlot] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   
@@ -105,6 +106,9 @@ export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChang
             // Notify parent about the activated effect
             onEffectActivated?.(activeEffect);
             
+            // Notify parent about item being used
+            onItemUsed?.(item);
+            
             toast.success(`Activated ${item.name}`, {
               description: activeEffect.description,
             });
@@ -124,6 +128,10 @@ export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChang
     player.removeItem(slotIndex, item.quantity);
     setRefreshKey(prev => prev + 1);
     onInventoryChange?.();
+    
+    // Notify parent about item being used
+    onItemUsed?.(item);
+    
     toast.success(`Used ${item.name}`, {
       description: 'The item has been consumed.',
     });

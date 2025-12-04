@@ -13,7 +13,9 @@ import { InventoryDrawer } from './components/InventoryDrawer';
 import { ArtifactDiscoveryModal, artifactToItem } from './components/ArtifactDiscoveryModal';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
-import { Package, Sparkles } from 'lucide-react';
+import { Package, Sparkles, BookOpen } from 'lucide-react';
+import { JournalDrawer } from './components/JournalDrawer';
+import { journalManager } from '@/lib/journal';
 
 function App() {
   const [automaton] = useState<Automaton>(() => {
@@ -63,6 +65,7 @@ function App() {
   const [selectedNode, setSelectedNode] = useState<State | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
+  const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [entropyUpdateTrigger, setEntropyUpdateTrigger] = useState(0);
   const [effectUpdateTrigger, setEffectUpdateTrigger] = useState(0);
   const [discoveredArtifact, setDiscoveredArtifact] = useState<Artifact | null>(null);
@@ -149,6 +152,22 @@ function App() {
         }
       }
       
+      // Track node change in journal
+      if (previousState.biome !== newPosition.biome) {
+        // Find the transition that was used
+        const usedTransition = previousState.transitions.find(t => t.to.biome === newPosition.biome);
+        if (usedTransition) {
+          const isModified = (usedTransition as any).modifiedByEffect === true;
+          journalManager.addEntry({
+            type: 'node_change',
+            fromBiome: previousState.biome,
+            toBiome: newPosition.biome,
+            odds: usedTransition.weight * 100,
+            modifiedByItem: isModified,
+          });
+        }
+      }
+      
       // Check for artifact discovery (50% chance)
       const artifact = generateRandomArtifact();
       if (artifact) {
@@ -166,6 +185,14 @@ function App() {
   const handleArtifactPickUp = useCallback((item: Item) => {
     const success = player.addItem(item);
     if (success) {
+      // Track item found in journal
+      journalManager.addEntry({
+        type: 'item_found',
+        itemName: item.name,
+        itemDescription: item.description,
+        itemRarity: item.rarity,
+      });
+      
       toast.success(`Picked up ${item.name}!`, {
         description: item.description,
       });
@@ -207,12 +234,24 @@ function App() {
             // Trigger graph update to show modified transitions
             setEffectUpdateTrigger(prev => prev + 1);
           }}
+          onItemUsed={(item) => {
+            // Track item used in journal
+            journalManager.addEntry({
+              type: 'item_used',
+              itemName: item.name,
+              itemDescription: item.description,
+            });
+          }}
           effectContext={{
             automaton,
             entropy,
             currentState: currentPosition,
             playerPosition: currentPosition,
           }}
+        />
+        <JournalDrawer 
+          isOpen={isJournalOpen}
+          onOpenChange={setIsJournalOpen}
         />
         <ArtifactDiscoveryModal
           artifact={discoveredArtifact}
@@ -273,6 +312,15 @@ function App() {
             >
               <Package className="h-4 w-4" />
               Inventory
+            </Button>
+            <Button 
+              onClick={() => setIsJournalOpen(true)}
+              variant="outline"
+              size="lg"
+              className="gap-2"
+            >
+              <BookOpen className="h-4 w-4" />
+              Journal
             </Button>
           </div>
         </div>
