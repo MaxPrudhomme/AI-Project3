@@ -2,8 +2,10 @@ import { type Player, type Item } from '@/lib/player';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Drawer, DrawerContent, DrawerClose } from '@/components/ui/drawer';
-import { X, Package } from 'lucide-react';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { X, Package, Zap, Trash2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 
 interface InventoryDrawerProps {
   isOpen: boolean;
@@ -66,6 +68,32 @@ export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChang
     e.preventDefault();
   };
 
+  const handleDropItem = (slotIndex: number) => {
+    const item = inventory[slotIndex];
+    if (item) {
+      player.removeItem(slotIndex, item.quantity);
+      setRefreshKey(prev => prev + 1);
+      onInventoryChange?.();
+      toast.success(`Dropped ${item.name}`, {
+        description: 'The item has been left on the ground.',
+      });
+    }
+  };
+
+  const handleUseItem = (slotIndex: number) => {
+    const item = inventory[slotIndex];
+    if (item) {
+      // For now, just delete the item (basic "get rid of" function)
+      // TODO: Call actual effect function when implemented
+      player.removeItem(slotIndex, item.quantity);
+      setRefreshKey(prev => prev + 1);
+      onInventoryChange?.();
+      toast.success(`Used ${item.name}`, {
+        description: 'The item has been consumed.',
+      });
+    }
+  };
+
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange} direction="right">
       <DrawerContent className="w-full h-screen rounded-none right-0 left-auto border-0 bg-transparent p-0 gap-0 data-[state=open]:slide-in-from-right-4 data-[state=closed]:slide-out-to-right-4">
@@ -114,90 +142,68 @@ export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChang
                 <h3 className="text-sm font-semibold text-foreground">Items</h3>
                 <div className="grid grid-cols-3 gap-2" key={refreshKey}>
                   {inventory.map((item, index) => (
-                    <div
-                      key={index}
-                      draggable={!!item}
-                      onDragStart={() => handleDragStart(index)}
-                      onDragEnd={handleDragEnd}
-                      onDrop={() => handleDrop(index)}
-                      onDragOver={handleDragOver}
-                      className={`
-                        aspect-square rounded-lg border-2 border-dashed border-border
-                        flex flex-col items-center justify-center p-2
-                        transition-all cursor-pointer
-                        ${item 
-                          ? `border-solid ${rarityBorderColors[item.rarity]} bg-muted/50 hover:bg-muted/70` 
-                          : 'hover:border-border hover:bg-muted/20'
-                        }
-                        ${draggedSlot === index ? 'opacity-50 scale-95' : ''}
-                      `}
-                      title={item ? `${item.name}${item.quantity > 1 ? ` (x${item.quantity})` : ''}` : 'Empty slot'}
-                    >
-                      {item ? (
-                        <>
-                          <div className={`
-                            w-8 h-8 rounded-full ${rarityColors[item.rarity]}
-                            flex items-center justify-center text-white text-xs font-bold
-                            mb-1
-                          `}>
-                            {item.name.charAt(0).toUpperCase()}
-                          </div>
-                          {item.quantity > 1 && (
-                            <span className="text-xs font-semibold text-foreground">
-                              {item.quantity}
-                            </span>
+                    <ContextMenu key={index}>
+                      <ContextMenuTrigger disabled={!item} asChild>
+                        <div
+                          draggable={!!item}
+                          onDragStart={() => handleDragStart(index)}
+                          onDragEnd={handleDragEnd}
+                          onDrop={() => handleDrop(index)}
+                          onDragOver={handleDragOver}
+                          className={`
+                            aspect-square rounded-lg border-2 border-dashed border-border
+                            flex flex-col items-center justify-center p-2
+                            transition-all cursor-pointer
+                            ${item 
+                              ? `border-solid ${rarityBorderColors[item.rarity]} bg-muted/50 hover:bg-muted/70` 
+                              : 'hover:border-border hover:bg-muted/20'
+                            }
+                            ${draggedSlot === index ? 'opacity-50 scale-95' : ''}
+                          `}
+                          title={item ? `${item.name}${item.quantity > 1 ? ` (x${item.quantity})` : ''} - Right-click for options` : 'Empty slot'}
+                        >
+                          {item ? (
+                            <>
+                              <div className={`
+                                w-8 h-8 rounded-full ${rarityColors[item.rarity]}
+                                flex items-center justify-center text-white text-xs font-bold
+                                mb-1
+                              `}>
+                                {item.name.charAt(0).toUpperCase()}
+                              </div>
+                              {item.quantity > 1 && (
+                                <span className="text-xs font-semibold text-foreground">
+                                  {item.quantity}
+                                </span>
+                              )}
+                              <span className="text-[10px] text-muted-foreground text-center truncate w-full">
+                                {item.name}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Empty</span>
                           )}
-                          <span className="text-[10px] text-muted-foreground text-center truncate w-full">
-                            {item.name}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Empty</span>
+                        </div>
+                      </ContextMenuTrigger>
+                      {item && (
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => handleUseItem(index)}>
+                            <Zap className="h-4 w-4" />
+                            Use
+                          </ContextMenuItem>
+                          <ContextMenuItem 
+                            onClick={() => handleDropItem(index)}
+                            variant="destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Drop on Ground
+                          </ContextMenuItem>
+                        </ContextMenuContent>
                       )}
-                    </div>
+                    </ContextMenu>
                   ))}
                 </div>
               </div>
-
-              {/* Item Details (if item is selected/hovered) */}
-              {inventory.some(item => item !== null) && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-foreground">Item Details</h3>
-                  <div className="space-y-2 p-2 rounded-md bg-muted/30 border border-dashed border-border">
-                    <p className="text-xs text-muted-foreground text-center">
-                      Click and drag items to reorganize
-                    </p>
-                    <div className="space-y-1">
-                      {inventory.filter(item => item !== null).map((item, idx) => (
-                        <div key={idx} className="text-xs p-2 rounded bg-background/50 border border-border/50">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium">{item!.name}</span>
-                            <Badge variant="outline" className="text-[10px]">
-                              {item!.type}
-                            </Badge>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground mt-1">
-                            {item!.description}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Badge 
-                              variant="secondary" 
-                              className={`text-[10px] ${rarityColors[item!.rarity]} text-white`}
-                            >
-                              {item!.rarity}
-                            </Badge>
-                            {item!.quantity > 1 && (
-                              <span className="text-[10px] text-muted-foreground">
-                                Quantity: {item!.quantity}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </ScrollArea>
         </div>

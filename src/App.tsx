@@ -1,13 +1,15 @@
 import { useState, useCallback, useRef } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
-import { Player } from '@/lib/player';
+import { Player, type Item } from '@/lib/player';
 import { Biomes } from '@/lib/world';
 import { Entropy } from '@/lib/entropy';
+import { generateRandomArtifact, type Artifact } from '@/lib/items';
 import { AutomatonGraph } from './components/AutomatonGraph';
 import { EntropyProgressBar } from './components/EntropyProgressBar';
 import { Button } from '@/components/ui/button';
 import { NodeDetailsDrawer } from './components/NodeDetailsDrawer';
 import { InventoryDrawer } from './components/InventoryDrawer';
+import { ArtifactDiscoveryModal, artifactToItem } from './components/ArtifactDiscoveryModal';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 import { Package } from 'lucide-react';
@@ -61,6 +63,7 @@ function App() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [entropyUpdateTrigger, setEntropyUpdateTrigger] = useState(0);
+  const [discoveredArtifact, setDiscoveredArtifact] = useState<Artifact | null>(null);
   
   // Create global entropy instance using all transitions from the automaton
   const [entropy] = useState<Entropy>(() => {
@@ -109,6 +112,12 @@ function App() {
         }
       }
       
+      // Check for artifact discovery (50% chance)
+      const artifact = generateRandomArtifact();
+      if (artifact) {
+        setDiscoveredArtifact(artifact);
+      }
+      
       setCurrentPosition(newPosition);
       setIsMoving(false);
     } catch (error) {
@@ -116,6 +125,27 @@ function App() {
       setIsMoving(false);
     }
   }, [player, currentPosition, isMoving, automaton, entropy]);
+
+  const handleArtifactPickUp = useCallback((item: Item) => {
+    const success = player.addItem(item);
+    if (success) {
+      toast.success(`Picked up ${item.name}!`, {
+        description: item.description,
+      });
+      setCurrentPosition(player.getPosition()); // Trigger re-render
+    } else {
+      toast.error('Inventory is full!', {
+        description: 'Make room before picking up this artifact.',
+      });
+    }
+  }, [player]);
+
+  const handleArtifactLeave = useCallback(() => {
+    setDiscoveredArtifact(null);
+  }, []);
+
+  const inventory = player.getInventory();
+  const hasInventorySpace = player.getItemCount() < inventory.length;
 
   return (
     <>
@@ -134,6 +164,13 @@ function App() {
             // Force re-render by updating a state
             setCurrentPosition(player.getPosition());
           }}
+        />
+        <ArtifactDiscoveryModal
+          artifact={discoveredArtifact}
+          isOpen={discoveredArtifact !== null}
+          onClose={handleArtifactLeave}
+          onPickUp={handleArtifactPickUp}
+          hasInventorySpace={hasInventorySpace}
         />
         <AutomatonGraph 
           automaton={automaton} 
