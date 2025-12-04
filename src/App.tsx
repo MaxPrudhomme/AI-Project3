@@ -2,7 +2,9 @@ import { useState, useCallback, useRef } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
 import { Player } from '@/lib/player';
 import { Biomes } from '@/lib/world';
+import { Entropy } from '@/lib/entropy';
 import { AutomatonGraph } from './components/AutomatonGraph';
+import { EntropyProgressBar } from './components/EntropyProgressBar';
 import { Button } from '@/components/ui/button';
 import { NodeDetailsDrawer } from './components/NodeDetailsDrawer';
 import { InventoryDrawer } from './components/InventoryDrawer';
@@ -58,6 +60,15 @@ function App() {
   const [selectedNode, setSelectedNode] = useState<State | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
+  const [entropyUpdateTrigger, setEntropyUpdateTrigger] = useState(0);
+  
+  // Create global entropy instance using all transitions from the automaton
+  const [entropy] = useState<Entropy>(() => {
+    const states = automaton.getStates();
+    // Collect all transitions from all states
+    const allTransitions = states.flatMap(state => state.transitions);
+    return new Entropy(allTransitions);
+  });
   
   // Track discovered biomes to detect new discoveries
   const discoveredBiomesRef = useRef<Set<string>>((() => {
@@ -77,6 +88,10 @@ function App() {
     setIsMoving(true);
     try {
       const newPosition = player.move();
+      
+      // Update entropy (+2 per move)
+      entropy.update(2);
+      setEntropyUpdateTrigger(prev => prev + 1); // Trigger re-render
       
       // Mark the new biome as discovered
       const states = automaton.getStates();
@@ -100,11 +115,12 @@ function App() {
       console.error('Move failed:', error);
       setIsMoving(false);
     }
-  }, [player, currentPosition, isMoving, automaton]);
+  }, [player, currentPosition, isMoving, automaton, entropy]);
 
   return (
     <>
       <div className="relative w-screen h-screen overflow-hidden">
+        <EntropyProgressBar entropy={entropy} />
         <NodeDetailsDrawer 
           isOpen={isDrawerOpen}
           onOpenChange={setIsDrawerOpen}

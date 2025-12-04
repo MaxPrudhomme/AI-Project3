@@ -6,6 +6,7 @@ import * as d3Drag from 'd3-drag';
 import { Automaton, type State } from '@/lib/automaton';
 import { Player } from '@/lib/player';
 import type { Biomes } from '@/lib/world';
+import { Entropy } from '@/lib/entropy';
 import {
   type NodeData,
   type LinkData,
@@ -60,9 +61,19 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
   const nodeLabelsRef = useRef<d3.Selection<SVGGElement, NodeData, SVGGElement, unknown> | null>(null);
   const edgeLabelsRef = useRef<d3.Selection<SVGGElement, LinkData, SVGGElement, unknown> | null>(null);
   const specialElementBadgesRef = useRef<d3.Selection<SVGGElement, NodeData, SVGGElement, unknown> | null>(null);
+  const entropyMapRef = useRef<Map<string, Entropy>>(new Map());
 
   const { nodes, links } = useMemo(() => {
     const states = automaton.getStates();
+    
+    // Create or reuse Entropy instances for each state's transitions
+    states.forEach((state) => {
+      if (state.transitions.length > 0) {
+        if (!entropyMapRef.current.has(state.biome)) {
+          entropyMapRef.current.set(state.biome, new Entropy(state.transitions));
+        }
+      }
+    });
     
     const nodeMap = new Map<string, NodeData>();
     states.forEach((state) => {
@@ -77,7 +88,11 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
 
     const linksData: LinkData[] = [];
     states.forEach((state) => {
-      state.transitions.forEach((transition) => {
+      // Use transitions from Entropy instead of state.transitions
+      const entropy = entropyMapRef.current.get(state.biome);
+      const transitions = entropy ? entropy.getTransitions() : state.transitions;
+      
+      transitions.forEach((transition) => {
         const source = nodeMap.get(state.biome);
         const target = nodeMap.get(transition.to.biome);
         if (source && target) {
