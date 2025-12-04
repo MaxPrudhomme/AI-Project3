@@ -60,12 +60,20 @@ export class Entropy {
         switch (this.state) {
             case 'Stable':
                 this.transitions.forEach(transition => {
-                    transition.weight = 0;
+                    // Don't modify locked transitions (from Path Anchor effect)
+                    if (!(transition as any).locked) {
+                        transition.weight = 0;
+                    }
                 });
                 break;
             case 'Shifting':
                 // Apply ±15% variation to each transition based on base weights
-                const shiftingWeights = this.baseWeights.map(baseWeight => {
+                const shiftingWeights = this.baseWeights.map((baseWeight, index) => {
+                    const transition = this.transitions[index];
+                    // Don't modify locked transitions
+                    if ((transition as any).locked) {
+                        return transition.weight;
+                    }
                     const variation = Math.random() < 0.5 ? -0.15 : 0.15;
                     return Math.max(0, baseWeight * (1 + variation));
                 });
@@ -73,13 +81,21 @@ export class Entropy {
                 const shiftingSum = shiftingWeights.reduce((acc, w) => acc + w, 0);
                 if (shiftingSum > 0) {
                     this.transitions.forEach((transition, index) => {
-                        transition.weight = shiftingWeights[index] / shiftingSum;
+                        // Don't modify locked transitions
+                        if (!(transition as any).locked) {
+                            transition.weight = shiftingWeights[index] / shiftingSum;
+                        }
                     });
                 }
                 break;
             case 'Chaotic':
                 // Apply ±15% variation to each transition based on base weights
-                const chaoticWeights = this.baseWeights.map(baseWeight => {
+                const chaoticWeights = this.baseWeights.map((baseWeight, index) => {
+                    const transition = this.transitions[index];
+                    // Don't modify locked transitions
+                    if ((transition as any).locked) {
+                        return transition.weight;
+                    }
                     const variation = Math.random() < 0.5 ? -0.40 : 0.40;
                     return Math.max(0, baseWeight * (1 + variation));
                 });
@@ -87,7 +103,10 @@ export class Entropy {
                 const chaoticSum = chaoticWeights.reduce((acc, w) => acc + w, 0);
                 if (chaoticSum > 0) {
                     this.transitions.forEach((transition, index) => {
-                        transition.weight = chaoticWeights[index] / chaoticSum;
+                        // Don't modify locked transitions
+                        if (!(transition as any).locked) {
+                            transition.weight = chaoticWeights[index] / chaoticSum;
+                        }
                     });
                 }
                 break;

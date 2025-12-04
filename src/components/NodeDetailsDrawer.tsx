@@ -83,16 +83,34 @@ export function NodeDetailsDrawer({ isOpen, onOpenChange, node }: NodeDetailsDra
                       // Only show odds if the target node is discovered
                       const showOdds = transition.to.discovered;
                       const displayTargetBiome = transition.to.discovered ? transition.to.biome : 'Unknown Biome';
+                      const isModified = (transition as any).modifiedByEffect === true;
                       
                       return (
-                        <div key={index} className="p-2 rounded-md bg-muted/50 border border-border/50">
+                        <div 
+                          key={index} 
+                          className={`p-2 rounded-md border ${
+                            isModified 
+                              ? 'bg-blue-500/10 border-blue-500/50' 
+                              : 'bg-muted/50 border-border/50'
+                          }`}
+                        >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <span className="text-muted-foreground">→</span>
                               <span className="text-sm font-medium">{displayTargetBiome}</span>
+                              {isModified && (
+                                <span className="text-xs text-blue-500" title="Modified by active effect">✨</span>
+                              )}
                             </div>
                             {showOdds && (
-                              <Badge variant="outline" className="text-xs">
+                              <Badge 
+                                variant="outline" 
+                                className={`text-xs ${
+                                  isModified 
+                                    ? 'border-blue-500 text-blue-600 bg-blue-500/20' 
+                                    : ''
+                                }`}
+                              >
                                 {(transition.weight * 100).toFixed(1)}%
                               </Badge>
                             )}

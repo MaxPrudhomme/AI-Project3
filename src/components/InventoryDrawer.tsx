@@ -3,15 +3,20 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Drawer, DrawerContent, DrawerClose } from '@/components/ui/drawer';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { X, Package, Zap, Trash2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
+import { findArtifactByName } from '@/lib/items';
+import type { EffectContext, ActiveEffect } from '@/lib/effects';
 
 interface InventoryDrawerProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   player: Player;
   onInventoryChange?: () => void;
+  onEffectActivated?: (effect: ActiveEffect) => void;
+  effectContext?: EffectContext;
 }
 
 const rarityColors = {
@@ -30,7 +35,7 @@ const rarityBorderColors = {
   legendary: 'border-yellow-400',
 };
 
-export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChange }: InventoryDrawerProps) {
+export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChange, onEffectActivated, effectContext }: InventoryDrawerProps) {
   const [draggedSlot, setDraggedSlot] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   
@@ -82,16 +87,46 @@ export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChang
 
   const handleUseItem = (slotIndex: number) => {
     const item = inventory[slotIndex];
-    if (item) {
-      // For now, just delete the item (basic "get rid of" function)
-      // TODO: Call actual effect function when implemented
-      player.removeItem(slotIndex, item.quantity);
-      setRefreshKey(prev => prev + 1);
-      onInventoryChange?.();
-      toast.success(`Used ${item.name}`, {
-        description: 'The item has been consumed.',
-      });
+    if (!item) return;
+
+    // Check if this is an artifact and has an effect
+    if (item.type === 'artifact' && effectContext) {
+      const artifact = findArtifactByName(item.name);
+      if (artifact && artifact.effect) {
+        try {
+          // Apply effect to current state's transitions
+          const activeEffect = artifact.effect(effectContext);
+          if (activeEffect) {
+            // Remove item from inventory (consumed)
+            player.removeItem(slotIndex, item.quantity);
+            setRefreshKey(prev => prev + 1);
+            onInventoryChange?.();
+            
+            // Notify parent about the activated effect
+            onEffectActivated?.(activeEffect);
+            
+            toast.success(`Activated ${item.name}`, {
+              description: activeEffect.description,
+            });
+            return;
+          }
+        } catch (error) {
+          console.error('Error activating artifact effect:', error);
+          toast.error('Failed to activate artifact', {
+            description: 'The artifact effect could not be applied.',
+          });
+          return;
+        }
+      }
     }
+
+    // Fallback: just remove the item if it's not an artifact or has no effect
+    player.removeItem(slotIndex, item.quantity);
+    setRefreshKey(prev => prev + 1);
+    onInventoryChange?.();
+    toast.success(`Used ${item.name}`, {
+      description: 'The item has been consumed.',
+    });
   };
 
   return (
@@ -140,69 +175,90 @@ export function InventoryDrawer({ isOpen, onOpenChange, player, onInventoryChang
               {/* Inventory Grid */}
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold text-foreground">Items</h3>
-                <div className="grid grid-cols-3 gap-2" key={refreshKey}>
-                  {inventory.map((item, index) => (
-                    <ContextMenu key={index}>
-                      <ContextMenuTrigger disabled={!item} asChild>
-                        <div
-                          draggable={!!item}
-                          onDragStart={() => handleDragStart(index)}
-                          onDragEnd={handleDragEnd}
-                          onDrop={() => handleDrop(index)}
-                          onDragOver={handleDragOver}
-                          className={`
-                            aspect-square rounded-lg border-2 border-dashed border-border
-                            flex flex-col items-center justify-center p-2
-                            transition-all cursor-pointer
-                            ${item 
-                              ? `border-solid ${rarityBorderColors[item.rarity]} bg-muted/50 hover:bg-muted/70` 
-                              : 'hover:border-border hover:bg-muted/20'
-                            }
-                            ${draggedSlot === index ? 'opacity-50 scale-95' : ''}
-                          `}
-                          title={item ? `${item.name}${item.quantity > 1 ? ` (x${item.quantity})` : ''} - Right-click for options` : 'Empty slot'}
-                        >
-                          {item ? (
-                            <>
-                              <div className={`
-                                w-8 h-8 rounded-full ${rarityColors[item.rarity]}
-                                flex items-center justify-center text-white text-xs font-bold
-                                mb-1
-                              `}>
-                                {item.name.charAt(0).toUpperCase()}
+                <TooltipProvider>
+                  <div className="grid grid-cols-3 gap-2" key={refreshKey}>
+                    {inventory.map((item, index) => (
+                      <ContextMenu key={index}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <ContextMenuTrigger disabled={!item} asChild>
+                              <div
+                                draggable={!!item}
+                                onDragStart={() => handleDragStart(index)}
+                                onDragEnd={handleDragEnd}
+                                onDrop={() => handleDrop(index)}
+                                onDragOver={handleDragOver}
+                                className={`
+                                  aspect-square rounded-lg border-2 border-dashed border-border
+                                  flex flex-col items-center justify-center p-2
+                                  transition-all cursor-pointer
+                                  ${item 
+                                    ? `border-solid ${rarityBorderColors[item.rarity]} bg-muted/50 hover:bg-muted/70` 
+                                    : 'hover:border-border hover:bg-muted/20'
+                                  }
+                                  ${draggedSlot === index ? 'opacity-50 scale-95' : ''}
+                                `}
+                              >
+                                {item ? (
+                                  <>
+                                    <div className={`
+                                      w-8 h-8 rounded-full ${rarityColors[item.rarity]}
+                                      flex items-center justify-center text-white text-xs font-bold
+                                      mb-1
+                                    `}>
+                                      {item.name.charAt(0).toUpperCase()}
+                                    </div>
+                                    {item.quantity > 1 && (
+                                      <span className="text-xs font-semibold text-foreground">
+                                        {item.quantity}
+                                      </span>
+                                    )}
+                                    <span className="text-[10px] text-muted-foreground text-center truncate w-full">
+                                      {item.name}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">Empty</span>
+                                )}
                               </div>
-                              {item.quantity > 1 && (
-                                <span className="text-xs font-semibold text-foreground">
-                                  {item.quantity}
-                                </span>
-                              )}
-                              <span className="text-[10px] text-muted-foreground text-center truncate w-full">
-                                {item.name}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Empty</span>
+                            </ContextMenuTrigger>
+                          </TooltipTrigger>
+                          {item && (
+                            <TooltipContent side="left" className="max-w-xs">
+                              <div className="space-y-1">
+                                <div className="font-semibold">
+                                  {item.name}
+                                  {item.quantity > 1 && ` (x${item.quantity})`}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {item.description}
+                                </div>
+                                <div className="text-xs text-muted-foreground pt-1 border-t border-border/50">
+                                  Right-click for options
+                                </div>
+                              </div>
+                            </TooltipContent>
                           )}
-                        </div>
-                      </ContextMenuTrigger>
-                      {item && (
-                        <ContextMenuContent>
-                          <ContextMenuItem onClick={() => handleUseItem(index)}>
-                            <Zap className="h-4 w-4" />
-                            Use
-                          </ContextMenuItem>
-                          <ContextMenuItem 
-                            onClick={() => handleDropItem(index)}
-                            variant="destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Drop on Ground
-                          </ContextMenuItem>
-                        </ContextMenuContent>
-                      )}
-                    </ContextMenu>
-                  ))}
-                </div>
+                        </Tooltip>
+                        {item && (
+                          <ContextMenuContent>
+                            <ContextMenuItem onClick={() => handleUseItem(index)}>
+                              <Zap className="h-4 w-4" />
+                              Use
+                            </ContextMenuItem>
+                            <ContextMenuItem 
+                              onClick={() => handleDropItem(index)}
+                              variant="destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Drop on Ground
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        )}
+                      </ContextMenu>
+                    ))}
+                  </div>
+                </TooltipProvider>
               </div>
             </div>
           </ScrollArea>

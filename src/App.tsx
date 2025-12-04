@@ -4,6 +4,7 @@ import { Player, type Item } from '@/lib/player';
 import { Biomes } from '@/lib/world';
 import { Entropy } from '@/lib/entropy';
 import { generateRandomArtifact, type Artifact } from '@/lib/items';
+import { EffectManager, type ActiveEffect, type EffectContext } from '@/lib/effects';
 import { AutomatonGraph } from './components/AutomatonGraph';
 import { EntropyProgressBar } from './components/EntropyProgressBar';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,7 @@ import { InventoryDrawer } from './components/InventoryDrawer';
 import { ArtifactDiscoveryModal, artifactToItem } from './components/ArtifactDiscoveryModal';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
-import { Package } from 'lucide-react';
+import { Package, Sparkles } from 'lucide-react';
 
 function App() {
   const [automaton] = useState<Automaton>(() => {
@@ -63,6 +64,7 @@ function App() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [entropyUpdateTrigger, setEntropyUpdateTrigger] = useState(0);
+  const [effectUpdateTrigger, setEffectUpdateTrigger] = useState(0);
   const [discoveredArtifact, setDiscoveredArtifact] = useState<Artifact | null>(null);
   
   // Create global entropy instance using all transitions from the automaton
@@ -72,6 +74,10 @@ function App() {
     const allTransitions = states.flatMap(state => state.transitions);
     return new Entropy(allTransitions);
   });
+
+  // Effect manager to track active effects
+  const [effectManager] = useState<EffectManager>(() => new EffectManager());
+  const [activeEffects, setActiveEffects] = useState<ActiveEffect[]>([]);
   
   // Track discovered biomes to detect new discoveries
   const discoveredBiomesRef = useRef<Set<string>>((() => {
@@ -92,9 +98,40 @@ function App() {
     try {
       const newPosition = player.move();
       
-      // Update entropy (+2 per move)
-      entropy.update(2);
-      setEntropyUpdateTrigger(prev => prev + 1); // Trigger re-render
+      // Check if we left a biome with Path Anchor effect (expire it)
+      const previousState = currentPosition;
+      let effectsChanged = false;
+      if (previousState.biome !== newPosition.biome) {
+        const pathAnchorEffect = activeEffects.find(e => e.id === 'path-anchor');
+        if (pathAnchorEffect) {
+          effectManager.removeEffect('path-anchor', automaton);
+          effectsChanged = true;
+        }
+      }
+      
+      // Process effect transitions (decrement duration, remove expired)
+      const effectsBefore = effectManager.getActiveEffects().length;
+      effectManager.processTransition(automaton);
+      const effectsAfter = effectManager.getActiveEffects().length;
+      if (effectsBefore !== effectsAfter) {
+        effectsChanged = true;
+      }
+      setActiveEffects(effectManager.getActiveEffects());
+      
+      // Only trigger graph update if effects actually changed
+      if (effectsChanged) {
+        setEffectUpdateTrigger(prev => prev + 1);
+      }
+      
+      // Update entropy (+2 per move, with potential reduction from effects)
+      const reductionFactor = (entropy as any).entropyReductionFactor || 1.0;
+      const entropyGain = 2 * reductionFactor;
+      entropy.update(entropyGain);
+      // Clear reduction factor after use
+      if ((entropy as any).entropyReductionFactor !== undefined) {
+        (entropy as any).entropyReductionFactor = undefined;
+      }
+      setEntropyUpdateTrigger(prev => prev + 1); // Trigger entropy bar re-render only
       
       // Mark the new biome as discovered
       const states = automaton.getStates();
@@ -164,6 +201,18 @@ function App() {
             // Force re-render by updating a state
             setCurrentPosition(player.getPosition());
           }}
+          onEffectActivated={(effect) => {
+            effectManager.addEffect(effect);
+            setActiveEffects(effectManager.getActiveEffects());
+            // Trigger graph update to show modified transitions
+            setEffectUpdateTrigger(prev => prev + 1);
+          }}
+          effectContext={{
+            automaton,
+            entropy,
+            currentState: currentPosition,
+            playerPosition: currentPosition,
+          }}
         />
         <ArtifactDiscoveryModal
           artifact={discoveredArtifact}
@@ -176,12 +225,36 @@ function App() {
           automaton={automaton} 
           player={player}
           currentPosition={currentPosition}
+          updateTrigger={effectUpdateTrigger}
           onNodeClick={(node) => {
             setSelectedNode(node);
             setIsDrawerOpen(true);
           }}
         />
         
+        {/* Active Effects Display - Top Left */}
+        {activeEffects.length > 0 && (
+          <div className="fixed top-4 left-4 z-50 flex flex-col gap-2">
+            {activeEffects.map((effect) => (
+              <div
+                key={effect.id}
+                className="bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg px-3 py-2 flex items-center gap-2 min-w-[200px]"
+                title={effect.description}
+              >
+                <Sparkles className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate">{effect.name}</div>
+                  {effect.duration !== undefined && (
+                    <div className="text-xs text-muted-foreground">
+                      {effect.duration} transition{effect.duration !== 1 ? 's' : ''} left
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Control Bar */}
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
           <div className="bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3">

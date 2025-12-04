@@ -45,9 +45,10 @@ interface AutomatonGraphProps {
   player: Player; // Kept for potential future use
   currentPosition: State;
   onNodeClick?: (node: State) => void;
+  updateTrigger?: number; // Trigger to force recalculation of links
 }
 
-export function AutomatonGraph({ automaton, player: _player, currentPosition, onNodeClick }: AutomatonGraphProps) {
+export function AutomatonGraph({ automaton, player: _player, currentPosition, onNodeClick, updateTrigger }: AutomatonGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3Force.Simulation<NodeData, LinkData> | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -88,9 +89,9 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
 
     const linksData: LinkData[] = [];
     states.forEach((state) => {
-      // Use transitions from Entropy instead of state.transitions
-      const entropy = entropyMapRef.current.get(state.biome);
-      const transitions = entropy ? entropy.getTransitions() : state.transitions;
+      // Use transitions directly from state (effects modify state.transitions)
+      // Entropy instances are used for entropy calculations, but UI displays state transitions
+      const transitions = state.transitions;
       
       transitions.forEach((transition) => {
         const source = nodeMap.get(state.biome);
@@ -110,7 +111,7 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
       nodes: Array.from(nodeMap.values()),
       links: linksData,
     };
-  }, [automaton]);
+  }, [automaton]); // Only recalculate when automaton structure changes, not when effects modify weights
 
   // Update the ref whenever currentPosition changes
   useEffect(() => {
@@ -661,6 +662,92 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
     }
   }, [currentPosition, nodes]);
 
+  // Update link weights when effects change (without rebuilding the graph)
+  useEffect(() => {
+    if (!linkElementsRef.current || !edgeLabelsRef.current) return;
+    
+    const states = automaton.getStates();
+    const stateMap = new Map(states.map(s => [s.biome, s]));
+    
+    // Update link weights directly from state transitions
+    linkElementsRef.current.each(function (d) {
+      const sourceState = stateMap.get(d.source.id as Biomes);
+      if (sourceState) {
+        const transition = sourceState.transitions.find(t => t.to.biome === d.target.id);
+        if (transition) {
+          // Update the weight in the link data
+          d.weight = transition.weight;
+        }
+      }
+    });
+    
+    // Update edge labels if they're currently visible (hovered node)
+    if (hoveredNodeId) {
+      edgeLabelsRef.current.each(function (d) {
+        const g = d3.select(this);
+        const text = g.select('text');
+        const rect = g.select('rect');
+        const isOutgoingEdge = d.source.id === hoveredNodeId;
+        
+        if (isOutgoingEdge) {
+          const sourceState = stateMap.get(d.source.id as Biomes);
+          const targetState = stateMap.get(d.target.id as Biomes);
+          const sourceDiscovered = sourceState?.discovered ?? false;
+          const targetDiscovered = targetState?.discovered ?? false;
+          
+          // Update weight from state transition
+          if (sourceState) {
+            const transition = sourceState.transitions.find(t => t.to.biome === d.target.id);
+            if (transition) {
+              d.weight = transition.weight;
+            }
+          }
+          
+          // Check if this transition is modified by an effect
+          let isModified = false;
+          if (sourceState) {
+            const transition = sourceState.transitions.find(t => t.to.biome === d.target.id);
+            isModified = transition ? (transition as any).modifiedByEffect === true : false;
+          }
+          
+          if (sourceDiscovered && targetDiscovered) {
+            const percentage = (d.weight * 100).toFixed(1);
+            text.text(`${percentage}%`);
+          } else {
+            text.text('???');
+          }
+          
+          // Update rectangle size based on text content
+          const bbox = (text.node() as SVGTextElement)?.getBBox();
+          const padding = 4;
+          const width = bbox ? bbox.width + padding * 2 : 40;
+          const height = bbox ? bbox.height + padding * 2 : 20;
+          
+          // Style based on whether transition is modified
+          if (isModified) {
+            rect
+              .attr('fill', '#3b82f6')
+              .attr('stroke', '#2563eb')
+              .attr('stroke-width', 1.5);
+            text.attr('fill', '#ffffff');
+          } else {
+            rect
+              .attr('fill', '#ffffff')
+              .attr('stroke', '#e5e7eb')
+              .attr('stroke-width', 1);
+            text.attr('fill', '#1f2937');
+          }
+          
+          rect
+            .attr('x', -width / 2)
+            .attr('y', -height / 2)
+            .attr('width', width)
+            .attr('height', height);
+        }
+      });
+    }
+  }, [updateTrigger, automaton, hoveredNodeId]);
+
   // Update hover state when hoveredNodeId changes
   useEffect(() => {
     if (!nodeElementsRef.current || !linkElementsRef.current || !linkDotsRef.current || !nodeLabelsRef.current || !edgeLabelsRef.current) return;
@@ -737,6 +824,13 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
         const sourceDiscovered = sourceState?.discovered ?? false;
         const targetDiscovered = targetState?.discovered ?? false;
         
+        // Check if this transition is modified by an effect
+        let isModified = false;
+        if (sourceState) {
+          const transition = sourceState.transitions.find(t => t.to.biome === d.target.id);
+          isModified = transition ? (transition as any).modifiedByEffect === true : false;
+        }
+        
         if (sourceDiscovered && targetDiscovered) {
           // Show probability as percentage
           const percentage = (d.weight * 100).toFixed(1);
@@ -751,6 +845,22 @@ export function AutomatonGraph({ automaton, player: _player, currentPosition, on
         const padding = 4;
         const width = bbox ? bbox.width + padding * 2 : 40;
         const height = bbox ? bbox.height + padding * 2 : 20;
+        
+        // Style based on whether transition is modified
+        if (isModified) {
+          rect
+            .attr('fill', '#3b82f6') // blue-500
+            .attr('stroke', '#2563eb') // blue-600
+            .attr('stroke-width', 1.5);
+          text.attr('fill', '#ffffff');
+        } else {
+          rect
+            .attr('fill', '#ffffff')
+            .attr('stroke', '#e5e7eb')
+            .attr('stroke-width', 1);
+          text.attr('fill', '#1f2937');
+        }
+        
         rect
           .attr('x', -width / 2)
           .attr('y', -height / 2)
