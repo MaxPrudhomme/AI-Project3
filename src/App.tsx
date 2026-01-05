@@ -10,12 +10,14 @@ import { EntropyProgressBar } from './components/EntropyProgressBar';
 import { Button } from '@/components/ui/button';
 import { NodeDetailsDrawer } from './components/NodeDetailsDrawer';
 import { InventoryDrawer } from './components/InventoryDrawer';
-import { ArtifactDiscoveryModal, artifactToItem } from './components/ArtifactDiscoveryModal';
+import { ArtifactDiscoveryModal } from './components/ArtifactDiscoveryModal';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 import { Package, Sparkles, BookOpen } from 'lucide-react';
 import { JournalDrawer } from './components/JournalDrawer';
 import { journalManager } from '@/lib/journal';
+import { LLMControls } from './components/LLMControls';
+import { buildGameContext, llmController, type LLMDecision } from '@/lib/llm';
 
 function App() {
   const [automaton] = useState<Automaton>(() => {
@@ -66,7 +68,7 @@ function App() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
-  const [entropyUpdateTrigger, setEntropyUpdateTrigger] = useState(0);
+  const [, setEntropyUpdateTrigger] = useState(0);
   const [effectUpdateTrigger, setEffectUpdateTrigger] = useState(0);
   const [discoveredArtifact, setDiscoveredArtifact] = useState<Artifact | null>(null);
   
@@ -93,6 +95,35 @@ function App() {
     });
     return initialSet;
   })());
+
+  // LLM integration: build game context for LLM decisions
+  const getGameContext = useCallback(() => {
+    return buildGameContext(
+      currentPosition,
+      player.getInventory(),
+      entropy,
+      Array.from(discoveredBiomesRef.current)
+    );
+  }, [currentPosition, player, entropy]);
+
+  // LLM integration: handle LLM decisions and log to journal
+  const handleLLMDecision = useCallback((decision: LLMDecision) => {
+    const inventory = player.getInventory();
+    let itemName: string | undefined;
+    
+    if (decision.action === 'use_item' && decision.itemIndex !== undefined) {
+      const item = inventory[decision.itemIndex];
+      itemName = item?.name;
+    }
+
+    journalManager.addEntry({
+      type: 'llm_decision',
+      action: decision.action,
+      reasoning: decision.reasoning,
+      modelId: llmController.getModel(),
+      itemName,
+    });
+  }, [player]);
 
   const handleMove = useCallback(() => {
     if (isMoving) return;
@@ -181,6 +212,54 @@ function App() {
       setIsMoving(false);
     }
   }, [player, currentPosition, isMoving, automaton, entropy]);
+
+  // LLM integration: execute the action decided by LLM
+  const executeLLMAction = useCallback(async (decision: LLMDecision) => {
+    if (decision.action === 'use_item' && decision.itemIndex !== undefined) {
+      // Use an item from inventory
+      const inventory = player.getInventory();
+      const item = inventory[decision.itemIndex];
+      
+      if (item && item.type === 'artifact') {
+        const { findArtifactByName } = await import('@/lib/items');
+        const artifact = findArtifactByName(item.name);
+        
+        if (artifact && artifact.effect) {
+          const context: EffectContext = {
+            automaton,
+            entropy,
+            currentState: currentPosition,
+            playerPosition: currentPosition,
+          };
+          
+          const activeEffect = artifact.effect(context);
+          if (activeEffect) {
+            player.removeItem(decision.itemIndex, item.quantity);
+            effectManager.addEffect(activeEffect);
+            setActiveEffects(effectManager.getActiveEffects());
+            setEffectUpdateTrigger(prev => prev + 1);
+            
+            // Track item used in journal
+            journalManager.addEntry({
+              type: 'item_used',
+              itemName: item.name,
+              itemDescription: item.description,
+            });
+            
+            toast.success(`AI used ${item.name}`, {
+              description: activeEffect.description,
+            });
+          }
+        }
+      }
+      
+      // After using item, also move
+      await new Promise(resolve => setTimeout(resolve, 500)); // Brief delay
+    }
+    
+    // Always perform a move after any action
+    handleMove();
+  }, [player, automaton, entropy, currentPosition, effectManager, handleMove]);
 
   const handleArtifactPickUp = useCallback((item: Item) => {
     const success = player.addItem(item);
@@ -293,6 +372,15 @@ function App() {
             ))}
           </div>
         )}
+
+        {/* LLM Auto-Play Controls - Top Right */}
+        <div className="fixed top-4 right-4 z-50 w-80">
+          <LLMControls
+            getGameContext={getGameContext}
+            executeAction={executeLLMAction}
+            onDecision={handleLLMDecision}
+          />
+        </div>
 
         {/* Control Bar */}
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">

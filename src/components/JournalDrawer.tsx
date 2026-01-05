@@ -4,7 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { X, BookOpen, ArrowRight, Package, Zap } from 'lucide-react';
+import { X, BookOpen, ArrowRight, Package, Zap, Bot } from 'lucide-react';
 import { journalManager, type JournalEntry, type JournalFilter } from '@/lib/journal';
 import { cn } from '@/lib/utils';
 
@@ -120,6 +120,29 @@ function JournalEntryCard({ entry }: { entry: JournalEntry }) {
     );
   }
 
+  if (entry.type === 'llm_decision') {
+    return (
+      <Card className="p-4 border-blue-500/50 hover:border-blue-500 transition-colors bg-blue-500/5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
+              <Bot className="h-4 w-4 text-blue-500 flex-shrink-0" />
+              <span className="text-sm font-semibold text-blue-600">AI Decision</span>
+              <span className="text-xs text-muted-foreground ml-auto">{formatTime(entry.timestamp)}</span>
+            </div>
+            <div className="flex items-center gap-2 mb-2">
+              <Badge variant="outline" className="border-blue-400">
+                {entry.action === 'move' ? 'Move' : `Use Item: ${entry.itemName || 'Unknown'}`}
+              </Badge>
+            </div>
+            <p className="text-sm text-foreground/90 italic">"{entry.reasoning}"</p>
+            <p className="text-xs text-muted-foreground mt-1">Model: {entry.modelId}</p>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
   return null;
 }
 
@@ -182,6 +205,14 @@ export function JournalDrawer({ isOpen, onOpenChange }: JournalDrawerProps) {
               >
                 <Package className="h-4 w-4 mr-2" />
                 Items
+              </Button>
+              <Button
+                variant={filter === 'llm' ? 'default' : 'ghost'}
+                className="justify-start"
+                onClick={() => setFilter('llm')}
+              >
+                <Bot className="h-4 w-4 mr-2" />
+                AI Decisions
               </Button>
             </div>
 

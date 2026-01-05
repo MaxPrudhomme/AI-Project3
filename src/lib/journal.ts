@@ -1,7 +1,6 @@
-import type { State } from './automaton';
 import type { Item } from './player';
 
-export type JournalEntryType = 'node_change' | 'item_found' | 'item_used';
+export type JournalEntryType = 'node_change' | 'item_found' | 'item_used' | 'llm_decision';
 
 export interface BaseJournalEntry {
   id: string;
@@ -30,9 +29,17 @@ export interface ItemUsedEntry extends BaseJournalEntry {
   itemDescription: string;
 }
 
-export type JournalEntry = NodeChangeEntry | ItemFoundEntry | ItemUsedEntry;
+export interface LLMDecisionEntry extends BaseJournalEntry {
+  type: 'llm_decision';
+  action: 'move' | 'use_item';
+  reasoning: string;
+  modelId: string;
+  itemName?: string;
+}
 
-export type JournalFilter = 'all' | 'nodes' | 'items';
+export type JournalEntry = NodeChangeEntry | ItemFoundEntry | ItemUsedEntry | LLMDecisionEntry;
+
+export type JournalFilter = 'all' | 'nodes' | 'items' | 'llm';
 
 class JournalManager {
   private entries: JournalEntry[] = [];
@@ -40,7 +47,12 @@ class JournalManager {
   /**
    * Add a new journal entry
    */
-  public addEntry(entry: Omit<JournalEntry, 'id' | 'timestamp'>): void {
+  public addEntry(entry: 
+    | Omit<NodeChangeEntry, 'id' | 'timestamp'>
+    | Omit<ItemFoundEntry, 'id' | 'timestamp'>
+    | Omit<ItemUsedEntry, 'id' | 'timestamp'>
+    | Omit<LLMDecisionEntry, 'id' | 'timestamp'>
+  ): void {
     const newEntry: JournalEntry = {
       ...entry,
       id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -64,6 +76,10 @@ class JournalManager {
     
     if (filter === 'items') {
       return this.entries.filter(entry => entry.type === 'item_found' || entry.type === 'item_used');
+    }
+    
+    if (filter === 'llm') {
+      return this.entries.filter(entry => entry.type === 'llm_decision');
     }
     
     return [...this.entries];
