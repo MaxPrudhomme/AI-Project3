@@ -4,7 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { X, BookOpen, ArrowRight, Package, Zap } from 'lucide-react';
+import { X, BookOpen, ArrowRight, Package, Zap, Bot } from 'lucide-react';
 import { journalManager, type JournalEntry, type JournalFilter } from '@/lib/journal';
 import { cn } from '@/lib/utils';
 
@@ -43,6 +43,12 @@ function JournalEntryCard({ entry }: { entry: JournalEntry }) {
             <div className="flex items-center gap-2 mb-2">
               <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
               <span className="text-sm font-semibold">Node Change</span>
+              {entry.actor === 'llm' && (
+                <Badge variant="secondary" className="ml-1 text-xs gap-1">
+                  <Bot className="h-3 w-3" />
+                  LLM
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground ml-auto">{formatTime(entry.timestamp)}</span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -79,6 +85,12 @@ function JournalEntryCard({ entry }: { entry: JournalEntry }) {
             <div className="flex items-center gap-2 mb-2">
               <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
               <span className="text-sm font-semibold">Item Found</span>
+              {entry.actor === 'llm' && (
+                <Badge variant="secondary" className="ml-1 text-xs gap-1">
+                  <Bot className="h-3 w-3" />
+                  LLM
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground ml-auto">{formatTime(entry.timestamp)}</span>
             </div>
             <div className="flex items-center gap-2 mb-2">
@@ -108,6 +120,12 @@ function JournalEntryCard({ entry }: { entry: JournalEntry }) {
             <div className="flex items-center gap-2 mb-2">
               <Zap className="h-4 w-4 text-muted-foreground flex-shrink-0" />
               <span className="text-sm font-semibold">Item Used</span>
+              {entry.actor === 'llm' && (
+                <Badge variant="secondary" className="ml-1 text-xs gap-1">
+                  <Bot className="h-3 w-3" />
+                  LLM
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground ml-auto">{formatTime(entry.timestamp)}</span>
             </div>
             <div className="flex items-center gap-2 mb-2">

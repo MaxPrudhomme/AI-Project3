@@ -1,4 +1,3 @@
-import type { State } from './automaton';
 import type { Item } from './player';
 
 export type JournalEntryType = 'node_change' | 'item_found' | 'item_used';
@@ -7,6 +6,7 @@ export interface BaseJournalEntry {
   id: string;
   timestamp: number;
   type: JournalEntryType;
+  actor?: 'human' | 'llm'; // Who performed this action
 }
 
 export interface NodeChangeEntry extends BaseJournalEntry {
@@ -40,13 +40,18 @@ class JournalManager {
   /**
    * Add a new journal entry
    */
-  public addEntry(entry: Omit<JournalEntry, 'id' | 'timestamp'>): void {
+  public addEntry(
+    entry:
+      | Omit<NodeChangeEntry, 'id' | 'timestamp'>
+      | Omit<ItemFoundEntry, 'id' | 'timestamp'>
+      | Omit<ItemUsedEntry, 'id' | 'timestamp'>
+  ): void {
     const newEntry: JournalEntry = {
       ...entry,
       id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       timestamp: Date.now(),
     } as JournalEntry;
-    
+
     this.entries.unshift(newEntry); // Add to beginning (newest first)
   }
 

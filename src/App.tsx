@@ -3,8 +3,8 @@ import { Automaton, type State } from '@/lib/automaton';
 import { Player, type Item } from '@/lib/player';
 import { Biomes } from '@/lib/world';
 import { Entropy } from '@/lib/entropy';
-import { generateRandomArtifact, type Artifact } from '@/lib/items';
-import { EffectManager, type ActiveEffect, type EffectContext } from '@/lib/effects';
+import { generateRandomArtifact, findArtifactByName, type Artifact } from '@/lib/items';
+import { EffectManager, type ActiveEffect } from '@/lib/effects';
 import { AutomatonGraph } from './components/AutomatonGraph';
 import { EntropyProgressBar } from './components/EntropyProgressBar';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,9 @@ import { toast } from 'sonner';
 import { Package, Sparkles, BookOpen } from 'lucide-react';
 import { JournalDrawer } from './components/JournalDrawer';
 import { journalManager } from '@/lib/journal';
+import { LLMControlPanel } from './components/LLMControlPanel';
+import { LLMActivityDisplay } from './components/LLMActivityDisplay';
+import { LLMPlayer, type LLMActivity, type LLMPlayerState } from '@/lib/llm-player';
 
 function App() {
   const [automaton] = useState<Automaton>(() => {
@@ -66,7 +69,6 @@ function App() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
-  const [entropyUpdateTrigger, setEntropyUpdateTrigger] = useState(0);
   const [effectUpdateTrigger, setEffectUpdateTrigger] = useState(0);
   const [discoveredArtifact, setDiscoveredArtifact] = useState<Artifact | null>(null);
   
@@ -81,7 +83,12 @@ function App() {
   // Effect manager to track active effects
   const [effectManager] = useState<EffectManager>(() => new EffectManager());
   const [activeEffects, setActiveEffects] = useState<ActiveEffect[]>([]);
-  
+
+  // LLM Player state
+  const llmPlayerRef = useRef<LLMPlayer | null>(null);
+  const [llmPlayerState, setLLMPlayerState] = useState<LLMPlayerState>('idle');
+  const [llmActivities, setLLMActivities] = useState<LLMActivity[]>([]);
+
   // Track discovered biomes to detect new discoveries
   const discoveredBiomesRef = useRef<Set<string>>((() => {
     const initialSet = new Set<string>();
@@ -94,9 +101,9 @@ function App() {
     return initialSet;
   })());
 
-  const handleMove = useCallback(() => {
+  const handleMove = useCallback((actor: 'human' | 'llm' = 'human') => {
     if (isMoving) return;
-    
+
     setIsMoving(true);
     try {
       const newPosition = player.move();
@@ -134,8 +141,7 @@ function App() {
       if ((entropy as any).entropyReductionFactor !== undefined) {
         (entropy as any).entropyReductionFactor = undefined;
       }
-      setEntropyUpdateTrigger(prev => prev + 1); // Trigger entropy bar re-render only
-      
+
       // Mark the new biome as discovered
       const states = automaton.getStates();
       const newState = states.find(s => s.biome === newPosition.biome);
@@ -159,11 +165,12 @@ function App() {
         if (usedTransition) {
           const isModified = (usedTransition as any).modifiedByEffect === true;
           journalManager.addEntry({
-            type: 'node_change',
+            type: 'node_change' as const,
             fromBiome: previousState.biome,
             toBiome: newPosition.biome,
             odds: usedTransition.weight * 100,
             modifiedByItem: isModified,
+            actor,
           });
         }
       }
@@ -176,21 +183,39 @@ function App() {
       
       setCurrentPosition(newPosition);
       setIsMoving(false);
+
+      // Return move result for LLM player
+      return {
+        success: true,
+        fromBiome: `${previousState.biome} (${previousState.variant})`,
+        toBiome: `${newPosition.biome} (${newPosition.variant})`,
+        artifact: artifact ? {
+          name: artifact.name,
+          description: artifact.description,
+          class: artifact.class,
+        } : undefined,
+      };
     } catch (error) {
       console.error('Move failed:', error);
       setIsMoving(false);
+      return {
+        success: false,
+        fromBiome: '',
+        toBiome: '',
+      };
     }
   }, [player, currentPosition, isMoving, automaton, entropy]);
 
-  const handleArtifactPickUp = useCallback((item: Item) => {
+  const handleArtifactPickUp = useCallback((item: Item, actor: 'human' | 'llm' = 'human') => {
     const success = player.addItem(item);
     if (success) {
       // Track item found in journal
       journalManager.addEntry({
-        type: 'item_found',
+        type: 'item_found' as const,
         itemName: item.name,
         itemDescription: item.description,
         itemRarity: item.rarity,
+        actor,
       });
       
       toast.success(`Picked up ${item.name}!`, {
@@ -206,6 +231,97 @@ function App() {
 
   const handleArtifactLeave = useCallback(() => {
     setDiscoveredArtifact(null);
+  }, []);
+
+  // LLM Player handlers
+  const handleLLMStart = useCallback((config: { apiUrl: string; model: string }) => {
+    if (llmPlayerRef.current) {
+      llmPlayerRef.current.stop();
+    }
+
+    llmPlayerRef.current = new LLMPlayer(
+      config,
+      automaton,
+      player,
+      entropy,
+      effectManager,
+      {
+        onActivityUpdate: (activity) => {
+          setLLMActivities((prev) => [...prev, activity]);
+        },
+        onStateChange: (state) => {
+          setLLMPlayerState(state);
+        },
+        onMove: async () => {
+          const moveResult = handleMove('llm');
+          if (moveResult && llmPlayerRef.current) {
+            llmPlayerRef.current.updateMoveResult(moveResult);
+
+            // Auto-pick up artifact if found
+            if (moveResult.artifact && discoveredArtifact) {
+              const item = artifactToItem(discoveredArtifact);
+              handleArtifactPickUp(item, 'llm');
+              setDiscoveredArtifact(null);
+            }
+          }
+        },
+        onUseItem: (index) => {
+          const inventory = player.getInventory();
+          const item = inventory[index];
+          if (item && item.type === 'artifact') {
+            const artifact = findArtifactByName(item.name);
+            if (artifact && artifact.effect) {
+              try {
+                // Apply effect to current state's transitions
+                const effectContext = {
+                  automaton,
+                  entropy,
+                  currentState: currentPosition,
+                  playerPosition: currentPosition,
+                };
+                const activeEffect = artifact.effect(effectContext);
+                if (activeEffect) {
+                  // Remove item from inventory (consumed)
+                  player.removeItem(index);
+                  setCurrentPosition(player.getPosition()); // Force re-render
+
+                  // Notify about the activated effect
+                  effectManager.addEffect(activeEffect);
+                  setActiveEffects(effectManager.getActiveEffects());
+                  setEffectUpdateTrigger(prev => prev + 1);
+
+                  // Track in journal
+                  journalManager.addEntry({
+                    type: 'item_used' as const,
+                    itemName: item.name,
+                    itemDescription: item.description,
+                    actor: 'llm',
+                  });
+                }
+              } catch (error) {
+                console.error('Error activating artifact effect:', error);
+              }
+            }
+          }
+        },
+      }
+    );
+
+    llmPlayerRef.current.start();
+  }, [automaton, player, entropy, effectManager, handleMove, handleArtifactPickUp, currentPosition, discoveredArtifact]);
+
+  const handleLLMPause = useCallback(() => {
+    llmPlayerRef.current?.pause();
+  }, []);
+
+  const handleLLMResume = useCallback(() => {
+    llmPlayerRef.current?.resume();
+  }, []);
+
+  const handleLLMStop = useCallback(() => {
+    llmPlayerRef.current?.stop();
+    llmPlayerRef.current = null;
+    setLLMActivities([]);
   }, []);
 
   const inventory = player.getInventory();
@@ -237,7 +353,7 @@ function App() {
           onItemUsed={(item) => {
             // Track item used in journal
             journalManager.addEntry({
-              type: 'item_used',
+              type: 'item_used' as const,
               itemName: item.name,
               itemDescription: item.description,
             });
@@ -297,8 +413,8 @@ function App() {
         {/* Control Bar */}
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
           <div className="bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3">
-            <Button 
-              onClick={handleMove}
+            <Button
+              onClick={() => handleMove('human')}
               disabled={isMoving}
               size="lg"
             >
@@ -313,7 +429,7 @@ function App() {
               <Package className="h-4 w-4" />
               Inventory
             </Button>
-            <Button 
+            <Button
               onClick={() => setIsJournalOpen(true)}
               variant="outline"
               size="lg"
@@ -324,6 +440,21 @@ function App() {
             </Button>
           </div>
         </div>
+
+        {/* LLM Control Panel */}
+        <LLMControlPanel
+          state={llmPlayerState}
+          onStart={handleLLMStart}
+          onPause={handleLLMPause}
+          onResume={handleLLMResume}
+          onStop={handleLLMStop}
+        />
+
+        {/* LLM Activity Display */}
+        <LLMActivityDisplay
+          activities={llmActivities}
+          isActive={llmPlayerState !== 'idle'}
+        />
       </div>
       <Toaster position="bottom-right" />
     </>
