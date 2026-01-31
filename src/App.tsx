@@ -1,9 +1,9 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import { Automaton, type State } from '@/lib/automaton';
 import { Player, type Item } from '@/lib/player';
 import { Biomes } from '@/lib/world';
 import { Entropy } from '@/lib/entropy';
-import { generateRandomArtifact, type Artifact } from '@/lib/items';
+import { generateRandomArtifact, findArtifactByName, type Artifact } from '@/lib/items';
 import { EffectManager, type ActiveEffect, type EffectContext } from '@/lib/effects';
 import { AutomatonGraph } from './components/AutomatonGraph';
 import { EntropyProgressBar } from './components/EntropyProgressBar';
@@ -16,8 +16,19 @@ import { toast } from 'sonner';
 import { Package, Sparkles, BookOpen } from 'lucide-react';
 import { JournalDrawer } from './components/JournalDrawer';
 import { journalManager } from '@/lib/journal';
+import { LLMControls, buildGameState } from './components/LLMControls';
+import type { LLMAction } from '@/lib/llmController';
+import { VictoryScreen } from './components/VictoryScreen';
+import { DefeatScreen } from './components/DefeatScreen';
+import { boostGatewayVisibility, checkGatewayBoostConditions } from '@/lib/gatewayLogic';
 
 function App() {
+  // Victory and stats tracking
+  const [hasWon, setHasWon] = useState(false);
+  const [hasLost, setHasLost] = useState(false);
+  const [lossReason, setLossReason] = useState<'max_entropy' | 'dead_end' | 'no_moves'>('max_entropy');
+  const [totalMoves, setTotalMoves] = useState(0);
+  const [itemsUsedCount, setItemsUsedCount] = useState(0);
   const [automaton] = useState<Automaton>(() => {
     const auto = Automaton.createRandom();
     const states = auto.getStates();
@@ -94,12 +105,17 @@ function App() {
     return initialSet;
   })());
 
+  // Track previous values for Gateway boost threshold detection
+  const previousDiscoveredCountRef = useRef(1); // Start with 1 (initial biome)
+  const previousEntropyRef = useRef(0);
+
   const handleMove = useCallback(() => {
-    if (isMoving) return;
-    
+    if (isMoving || hasWon || hasLost) return;
+
     setIsMoving(true);
     try {
       const newPosition = player.move();
+      setTotalMoves(prev => prev + 1);
       
       // Check if we left a biome with Path Anchor effect (expire it)
       const previousState = currentPosition;
@@ -135,6 +151,18 @@ function App() {
         (entropy as any).entropyReductionFactor = undefined;
       }
       setEntropyUpdateTrigger(prev => prev + 1); // Trigger entropy bar re-render only
+
+      // Check for max entropy loss condition
+      if (entropy.getCurrent() >= entropy.getMax()) {
+        setHasLost(true);
+        setLossReason('max_entropy');
+        toast.error('Entropy Overload!', {
+          description: 'The dream has collapsed into pure chaos.',
+          duration: 5000,
+        });
+        setIsMoving(false);
+        return;
+      }
       
       // Mark the new biome as discovered
       const states = automaton.getStates();
@@ -143,7 +171,7 @@ function App() {
         const wasNewDiscovery = !discoveredBiomesRef.current.has(newState.biome);
         newState.discovered = true;
         discoveredBiomesRef.current.add(newState.biome);
-        
+
         // Show notification if this is a newly discovered biome
         if (wasNewDiscovery) {
           toast.success(`Discovered new biome: ${newState.biome}!`, {
@@ -151,6 +179,33 @@ function App() {
           });
         }
       }
+
+      // Check and apply Gateway visibility boost
+      const currentDiscoveredCount = discoveredBiomesRef.current.size;
+      const currentEntropyValue = entropy.getCurrent();
+      const boostCheck = checkGatewayBoostConditions(
+        currentDiscoveredCount,
+        currentEntropyValue,
+        previousDiscoveredCountRef.current,
+        previousEntropyRef.current
+      );
+
+      if (boostCheck.shouldBoost) {
+        boostGatewayVisibility(automaton, currentDiscoveredCount, currentEntropyValue);
+        if (boostCheck.reason) {
+          toast.info('Gateway Revealed', {
+            description: boostCheck.reason,
+            duration: 4000,
+          });
+        }
+      } else {
+        // Always apply current boost multiplier (even if not newly triggered)
+        boostGatewayVisibility(automaton, currentDiscoveredCount, currentEntropyValue);
+      }
+
+      // Update previous values for next threshold check
+      previousDiscoveredCountRef.current = currentDiscoveredCount;
+      previousEntropyRef.current = currentEntropyValue;
       
       // Track node change in journal
       if (previousState.biome !== newPosition.biome) {
@@ -175,12 +230,49 @@ function App() {
       }
       
       setCurrentPosition(newPosition);
+
+      // Check for victory condition
+      if (newPosition.biome === Biomes.Gateway) {
+        setHasWon(true);
+        toast.success('Gateway Reached!', {
+          description: 'You have escaped the dream world!',
+          duration: 5000,
+        });
+        setIsMoving(false);
+        return;
+      }
+
+      // Check for dead end loss condition (no outgoing transitions)
+      if (newPosition.transitions.length === 0) {
+        setHasLost(true);
+        setLossReason('dead_end');
+        toast.error('Dead End!', {
+          description: 'You\'re trapped in a biome with no escape routes.',
+          duration: 5000,
+        });
+        setIsMoving(false);
+        return;
+      }
+
+      // Check if all transitions have zero weight (no valid moves)
+      const hasValidMoves = newPosition.transitions.some(t => t.weight > 0);
+      if (!hasValidMoves) {
+        setHasLost(true);
+        setLossReason('no_moves');
+        toast.error('No Path Forward!', {
+          description: 'All transitions have been sealed off.',
+          duration: 5000,
+        });
+        setIsMoving(false);
+        return;
+      }
+
       setIsMoving(false);
     } catch (error) {
       console.error('Move failed:', error);
       setIsMoving(false);
     }
-  }, [player, currentPosition, isMoving, automaton, entropy]);
+  }, [player, currentPosition, isMoving, automaton, entropy, hasWon, hasLost]);
 
   const handleArtifactPickUp = useCallback((item: Item) => {
     const success = player.addItem(item);
@@ -208,13 +300,137 @@ function App() {
     setDiscoveredArtifact(null);
   }, []);
 
+  // Handle using an item from inventory (extracted for LLM use)
+  const handleUseItem = useCallback((slotIndex: number) => {
+    if (hasWon || hasLost) return;
+
+    const inv = player.getInventory();
+    const item = inv[slotIndex];
+    if (!item) {
+      toast.error('No item in that slot');
+      return;
+    }
+
+    setItemsUsedCount(prev => prev + 1);
+
+    const context: EffectContext = {
+      automaton,
+      entropy,
+      currentState: currentPosition,
+      playerPosition: currentPosition,
+    };
+
+    if (item.type === 'artifact') {
+      const artifact = findArtifactByName(item.name);
+      if (artifact && artifact.effect) {
+        try {
+          const activeEffect = artifact.effect(context);
+          if (activeEffect) {
+            player.removeItem(slotIndex, item.quantity);
+            effectManager.addEffect(activeEffect);
+            setActiveEffects(effectManager.getActiveEffects());
+            setEffectUpdateTrigger(prev => prev + 1);
+            journalManager.addEntry({
+              type: 'item_used',
+              itemName: item.name,
+              itemDescription: item.description,
+            });
+            toast.success(`Activated ${item.name}`, {
+              description: activeEffect.description,
+            });
+            setCurrentPosition(player.getPosition());
+            return;
+          }
+        } catch (error) {
+          console.error('Error activating artifact effect:', error);
+          toast.error('Failed to activate artifact');
+          return;
+        }
+      }
+    }
+
+    // Fallback: just remove the item
+    player.removeItem(slotIndex, item.quantity);
+    journalManager.addEntry({
+      type: 'item_used',
+      itemName: item.name,
+      itemDescription: item.description,
+    });
+    toast.success(`Used ${item.name}`);
+    setCurrentPosition(player.getPosition());
+  }, [player, automaton, entropy, currentPosition, effectManager, hasWon, hasLost]);
+
+  // Handle dropping an item
+  const handleDropItem = useCallback((slotIndex: number) => {
+    if (hasWon || hasLost) return;
+
+    const inv = player.getInventory();
+    const item = inv[slotIndex];
+    if (!item) {
+      toast.error('No item in that slot');
+      return;
+    }
+    player.removeItem(slotIndex, item.quantity);
+    toast.success(`Dropped ${item.name}`);
+    setCurrentPosition(player.getPosition());
+  }, [player, hasWon, hasLost]);
+
+  // Handle restart
+  const handleRestart = useCallback(() => {
+    window.location.reload();
+  }, []);
+
+  // LLM action handler
+  const handleLLMAction = useCallback((action: LLMAction) => {
+    switch (action.type) {
+      case 'move':
+        handleMove();
+        break;
+      case 'useItem':
+        handleUseItem(action.slot);
+        break;
+      case 'pickUpItem':
+        if (discoveredArtifact) {
+          const item = artifactToItem(discoveredArtifact);
+          handleArtifactPickUp(item);
+          setDiscoveredArtifact(null);
+        }
+        break;
+      case 'leaveItem':
+        handleArtifactLeave();
+        break;
+      case 'dropItem':
+        handleDropItem(action.slot);
+        break;
+      case 'wait':
+        toast.info('LLM chose to wait');
+        break;
+    }
+  }, [handleMove, handleUseItem, handleDropItem, handleArtifactPickUp, handleArtifactLeave, discoveredArtifact]);
+
   const inventory = player.getInventory();
   const hasInventorySpace = player.getItemCount() < inventory.length;
+
+  // Build game state for LLM
+  const gameState = useMemo(() => buildGameState(
+    currentPosition,
+    entropy,
+    inventory,
+    activeEffects,
+    discoveredArtifact,
+    hasInventorySpace
+  ), [currentPosition, entropy, inventory, activeEffects, discoveredArtifact, hasInventorySpace]);
 
   return (
     <>
       <div className="relative w-screen h-screen overflow-hidden">
         <EntropyProgressBar entropy={entropy} />
+        <LLMControls
+          gameState={gameState}
+          onAction={handleLLMAction}
+          hasWon={hasWon}
+          hasLost={hasLost}
+        />
         <NodeDetailsDrawer 
           isOpen={isDrawerOpen}
           onOpenChange={setIsDrawerOpen}
@@ -297,12 +513,13 @@ function App() {
         {/* Control Bar */}
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
           <div className="bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3">
-            <Button 
+            <Button
               onClick={handleMove}
-              disabled={isMoving}
+              disabled={isMoving || hasWon || hasLost}
               size="lg"
+              variant={hasLost ? 'destructive' : 'default'}
             >
-              {isMoving ? 'Moving...' : 'Move'}
+              {hasLost ? 'Defeated' : hasWon ? 'Victory!' : isMoving ? 'Moving...' : 'Move'}
             </Button>
             <Button 
               onClick={() => setIsInventoryOpen(true)}
@@ -325,6 +542,32 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* Victory Screen */}
+      <VictoryScreen
+        isOpen={hasWon}
+        stats={{
+          totalMoves,
+          biomesDiscovered: discoveredBiomesRef.current.size,
+          itemsUsed: itemsUsedCount,
+          finalEntropy: entropy.getCurrent(),
+        }}
+        onRestart={handleRestart}
+      />
+
+      {/* Defeat Screen */}
+      <DefeatScreen
+        isOpen={hasLost}
+        reason={lossReason}
+        stats={{
+          totalMoves,
+          biomesDiscovered: discoveredBiomesRef.current.size,
+          itemsUsed: itemsUsedCount,
+          finalEntropy: entropy.getCurrent(),
+        }}
+        onRestart={handleRestart}
+      />
+
       <Toaster position="bottom-right" />
     </>
   );
